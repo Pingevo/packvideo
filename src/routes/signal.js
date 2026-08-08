@@ -2,6 +2,7 @@ import { Router } from 'express';
 import express from 'express';
 import { config } from '../config.js';
 import { record } from '../lib/metrics.js';
+import * as clips from '../lib/clips.js';
 
 export const signalRouter = Router();
 
@@ -69,12 +70,46 @@ signalRouter.post('/signal', parseForm, (req, res) => {
       'รับสัญญาณ',
     );
 
-    // TODO(P1-5): สร้าง/อัปเดตเอกสารใน clips + เขียน clip_events + ส่งต่อทาง SSE
+    // เดินวงจรชีวิตของคลิปแบบไม่รอ — ปลายทางได้ 204 ไปแล้ว
+    void dispatch(event, b, stationId).catch((err) =>
+      req.log.error({ err: err.message, signal: event }, 'เดินวงจรชีวิตคลิปไม่สำเร็จ'),
+    );
   } catch (err) {
     counters.rejected++;
     req.log.error({ err }, 'ประมวลผลสัญญาณไม่สำเร็จ');
   }
 });
+
+async function dispatch(event, b, stationId) {
+  switch (event) {
+    case 'start':
+      return clips.start({
+        traceId: b.trace_id,
+        stationId,
+        imei: b.value ?? null,
+        user: b.user ?? null,
+      });
+    case 'commit':
+      return clips.commit({
+        traceId: b.trace_id,
+        ordersn: b.ordersn ?? null,
+        flag: b.flag ?? null,
+        imeiComplete: b.imei_complete === 'true' ? true : b.imei_complete === 'false' ? false : null,
+      });
+    case 'abort':
+      return clips.abort({ traceId: b.trace_id, reason: b.reason ?? null });
+    case 'tag':
+      return clips.tag({
+        stationId,
+        trackingNo: b.tracking_no || null,
+        user: b.user ?? null,
+      });
+    case 'scan':
+      return clips.scan({ stationId, value: b.value ?? '' });
+    default:
+      return null;
+  }
+}
 
 /** ให้ hook.js จาก origin ของ sellcenter เรียกได้ — ระบุ origin ตรงๆ ไม่ใช้ '*' */
 export function signalCors(req, res, next) {

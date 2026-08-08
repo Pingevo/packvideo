@@ -7,6 +7,7 @@ import { healthRouter } from './routes/health.js';
 import { signalRouter, signalCors } from './routes/signal.js';
 import { stationsRouter } from './routes/stations.js';
 import { monitorRouter } from './routes/monitor.js';
+import { clipsRouter, mediaRouter } from './routes/clips.js';
 import { devRouter } from './dev/routes.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
@@ -29,6 +30,8 @@ export function createApp() {
   app.use('/api', healthRouter);
   app.use('/api', stationsRouter);
   app.use('/api', monitorRouter);
+  app.use('/api', clipsRouter);
+  app.use('/media', mediaRouter);
 
   app.use(signalCors);
   app.use(signalRouter);

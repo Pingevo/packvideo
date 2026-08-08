@@ -4,6 +4,7 @@ import { log } from './log.js';
 import { connect, close as closeDb } from './db.js';
 import { ensureStorage, storageStatus } from './lib/storage.js';
 import { startMonitor } from './lib/monitor.js';
+import { startSweeper } from './lib/clips.js';
 
 for (const warning of configWarnings()) log.warn(warning);
 
@@ -29,6 +30,7 @@ const server = createApp().listen(config.port, () => {
 });
 
 startMonitor();
+startSweeper();
 
 // การอัปโหลดชิ้นวิดีโอเป็น request สั้นๆ แต่ SSE เป็น request ยาว — ตั้งให้ยาวกว่าค่าปริยาย
 server.keepAliveTimeout = 65_000;

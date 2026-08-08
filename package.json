@@ -16,7 +16,9 @@
     "presmoke": "node scripts/check-node.cjs",
     "smoke": "node scripts/smoke.mjs",
     "preset-mongo": "node scripts/check-node.cjs",
-    "set-mongo": "node scripts/set-mongo-url.mjs"
+    "set-mongo": "node scripts/set-mongo-url.mjs",
+    "pree2e": "node scripts/check-node.cjs",
+    "e2e": "node scripts/e2e-clip.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

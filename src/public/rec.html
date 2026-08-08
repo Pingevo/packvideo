@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตัวอัดวิดีโอ — packvideo</title>
+<style>
+  :root { color-scheme: dark; --line: rgba(255,255,255,.16); }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; padding: 14px; background: #0d1117; color: #e6edf3;
+         line-height: 1.45; user-select: none; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .station { font-size: 17px; font-weight: 700; }
+  .rec { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .rec .dot { width: 10px; height: 10px; border-radius: 50%; background: #6e7681; }
+  .rec.on .dot { background: #f85149; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  video { width: 100%; border-radius: 9px; background: #000; display: block; aspect-ratio: 16/9;
+          object-fit: cover; }
+  .info { margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 3px 0; }
+  .row .k { opacity: .55; }
+  .row .v { font-family: ui-monospace, Menlo, monospace; text-align: right; word-break: break-all; }
+  .bar { display: flex; gap: 8px; margin-top: 10px; font-size: 12px; opacity: .75;
+         justify-content: space-between; }
+  button { font: inherit; padding: 11px 14px; border-radius: 8px; cursor: pointer; font-weight: 700;
+           border: 1px solid var(--line); background: transparent; color: inherit; width: 100%;
+           margin-top: 10px; }
+  button:active { transform: scale(.99); }
+  #stop { border-color: #f0883e; color: #f0883e; }
+  #stop.arming { background: #f0883e; color: #0d1117; }
+  .banner { position: fixed; inset: 0; display: none; flex-direction: column; gap: 14px;
+            align-items: center; justify-content: center; text-align: center; padding: 28px;
+            background: #7d1a1a; z-index: 50; }
+  .banner.show { display: flex; }
+  .banner h2 { font-size: 26px; margin: 0; }
+  /* pre-line เพื่อให้ \n ในข้อความขึ้นบรรทัดใหม่จริง — สามค่านี้ต้องอ่านแยกกันได้ในวินาทีเดียว */
+  .banner p { margin: 0; font-size: 17px; font-family: ui-monospace, Menlo, monospace;
+              white-space: pre-line; line-height: 1.8; }
+  .banner button { max-width: 260px; background: #fff; color: #7d1a1a; border-color: #fff; }
+  .warn { background: #9a6700; color: #fff; padding: 9px 12px; border-radius: 8px;
+          font-size: 13px; margin-bottom: 10px; display: none; }
+  .warn.show { display: block; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+
+<div class="banner" id="banner">
+  <h2>⚠️ ใบปะหน้าไม่ตรงกับออเดอร์ที่กำลังแพ็ค</h2>
+  <p id="banner-detail"></p>
+  <button id="banner-ok">รับทราบ</button>
+</div>
+
+<header>
+  <div class="station" id="station">—</div>
+  <div class="rec" id="rec"><span class="dot"></span><span id="rec-text">พร้อม</span></div>
+</header>
+
+<div class="warn" id="warn"></div>
+
+<video id="preview" autoplay muted playsinline></video>
+
+<div class="info">
+  <div class="row"><span class="k">ออเดอร์</span><span class="v" id="ordersn">—</span></div>
+  <div class="row"><span class="k">เลขพัสดุ</span><span class="v" id="tracking">—</span></div>
+  <div class="row"><span class="k">เวลาอัด</span><span class="v" id="elapsed">—</span></div>
+</div>
+
+<button id="stop" disabled>ปิดคลิปเอง (กดค้าง 1 วินาที)</button>
+
+<div class="bar">
+  <span id="queue">คิว 0</span>
+  <span id="disk">ดิสก์ —</span>
+  <span id="conn">ยังไม่เชื่อมต่อ</span>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var VERSION = '0.1.0';
+  var K = { station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id' };
+
+  var station = localStorage.getItem(K.station);
+  if (!station) {
+    document.body.innerHTML =
+      '<div style="padding:40px;text-align:center"><h2>เครื่องนี้ยังไม่ได้ตั้งค่า</h2>' +
+      '<p>ไปที่ <a href="/setup.html">หน้าตั้งค่า</a> เพื่อเลือกโต๊ะก่อน</p></div>';
+    return;
+  }
+
+  var S = {
+    clipId: null, ordersn: null, tracking: null,
+    recorder: null, stream: null, seq: 0, startedAt: 0,
+    queue: [], sending: false, allowed: true,
+    timeslice: 1000, videoBps: 1000000,
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function setText(id, v) { $(id).textContent = v; }
+
+  // ── กล้อง ───────────────────────────────────────────────────
+  function startCamera() {
+    var camId = localStorage.getItem(K.camera);
+    var constraints = {
+      audio: false,   // ไม่บันทึกเสียงเด็ดขาด ไม่มีสวิตช์ให้เปิด (FR-1.11 · PDPA)
+      video: camId ? { deviceId: { exact: camId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+                   : { width: { ideal: 1920 }, height: { ideal: 1080 } },
+    };
+    return navigator.mediaDevices.getUserMedia(constraints).then(function (s) {
+      S.stream = s;
+      $('preview').srcObject = s;
+      // กล้องถูกถอดกลางกะต้องขึ้นแดงทันที ไม่ใช่เงียบไปเฉยๆ
+      s.getVideoTracks().forEach(function (t) {
+        t.onended = function () { warn('กล้องหลุด — เสียบใหม่แล้วรีเฟรชหน้านี้'); };
+      });
+      return s;
+    });
+  }
+
+  function pickMime() {
+    var list = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    for (var i = 0; i < list.length; i++) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(list[i])) return list[i];
+    }
+    return '';
+  }
+
+  // ── อัด ─────────────────────────────────────────────────────
+  function beginClip(clipId) {
+    if (S.recorder) endRecorder();
+    if (!S.allowed) { warn('ดิสก์เต็ม — ไม่ได้บันทึกคลิปนี้'); return; }
+    if (!S.stream) { warn('ยังไม่มีภาพจากกล้อง'); return; }
+
+    S.clipId = clipId; S.seq = 0; S.startedAt = Date.now();
+    var mime = pickMime();
+    try {
+      S.recorder = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: S.videoBps });
+    } catch (e) { warn('เริ่มอัดไม่ได้: ' + e.message); return; }
+
+    S.recorder.ondataavailable = function (e) {
+      if (!e.data || !e.data.size || !S.clipId) return;
+      S.queue.push({ clipId: S.clipId, seq: S.seq++, blob: e.data });
+      pump();
+      updateQueue();
+    };
+    S.recorder.start(S.timeslice);
+    setRec(true);
+  }
+
+  function endRecorder() {
+    try { if (S.recorder && S.recorder.state !== 'inactive') S.recorder.stop(); } catch (e) {}
+    S.recorder = null;
+  }
+
+  function finishClip() {
+    endRecorder();
+    S.clipId = null; S.ordersn = null; S.tracking = null;
+    setRec(false);
+    setText('ordersn', '—'); setText('tracking', '—'); setText('elapsed', '—');
+    $('stop').disabled = true;
+  }
+
+  function setRec(on) {
+    $('rec').className = 'rec' + (on ? ' on' : '');
+    setText('rec-text', on ? 'กำลังอัด' : 'พร้อม');
+    $('stop').disabled = !on;
+  }
+
+  // ── ส่งชิ้นวิดีโอ ───────────────────────────────────────────
+  // ส่งทีละชิ้นตามลำดับ ล้มเหลวก็วนกลับมาลองใหม่ ไม่ทิ้ง
+  function pump() {
+    if (S.sending || !S.queue.length) return;
+    S.sending = true;
+    var item = S.queue[0];
+    fetch('/api/clip/' + encodeURIComponent(item.clipId) + '/chunk/' + item.seq, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: item.blob,
+    })
+      .then(function (r) {
+        if (r.ok || r.status === 404) S.queue.shift();   // 404 = คลิปถูกทิ้งไปแล้ว ไม่ต้องวนซ้ำ
+        S.sending = false; updateQueue(); pump();
+      })
+      .catch(function () {
+        S.sending = false; updateQueue();
+        setTimeout(pump, 2000);   // เน็ตสะดุด — คิวรออยู่ ไม่หาย
+      });
+  }
+
+  function updateQueue() {
+    setText('queue', 'คิว ' + S.queue.length);
+    if (S.queue.length > 20) warn('คิวอัปโหลดค้าง ' + S.queue.length + ' ชิ้น');
+  }
+
+  // ── ปิดคลิปเอง ──────────────────────────────────────────────
+  // ต้องกดค้าง 1 วินาที กันกดโดนตอนหยิบของ (FR-1.10)
+  (function () {
+    var timer = null;
+    var btn = $('stop');
+    function down() {
+      if (btn.disabled) return;
+      btn.classList.add('arming');
+      timer = setTimeout(function () {
+        btn.classList.remove('arming');
+        var id = S.clipId;
+        finishClip();
+        fetch('/api/clip/' + encodeURIComponent(id) + '/close', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'manual_stop' }),
+        }).catch(function () {});
+      }, 1000);
+    }
+    function up() { clearTimeout(timer); btn.classList.remove('arming'); }
+    btn.addEventListener('pointerdown', down);
+    btn.addEventListener('pointerup', up);
+    btn.addEventListener('pointerleave', up);
+  })();
+
+  // ── รับสัญญาณจากเซิร์ฟเวอร์ ─────────────────────────────────
+  function connect() {
+    var es = new EventSource('/api/stream/' + encodeURIComponent(station));
+
+    es.onopen = function () { setText('conn', 'เชื่อมต่อแล้ว'); };
+    es.onerror = function () { setText('conn', 'ขาดการเชื่อมต่อ — กำลังต่อใหม่'); };
+
+    es.addEventListener('config', function (e) {
+      var d = JSON.parse(e.data);
+      S.allowed = d.recording !== false;
+      if (d.timeslice_ms) S.timeslice = d.timeslice_ms;
+      if (d.video_bps) S.videoBps = d.video_bps;
+      setText('disk', 'ดิสก์ ' + (d.disk_used_pct != null ? d.disk_used_pct + '%' : '—'));
+      if (!S.allowed) warn('ดิสก์เต็ม — หยุดบันทึกชั่วคราว งานแพ็คทำต่อได้ตามปกติ');
+      else clearWarn();
+    });
+
+    es.addEventListener('start', function (e) { beginClip(JSON.parse(e.data).clip_id); });
+
+    es.addEventListener('commit', function (e) {
+      var d = JSON.parse(e.data);
+      S.ordersn = d.ordersn; setText('ordersn', d.ordersn || '—');
+    });
+
+    es.addEventListener('abort', function () { finishClip(); });
+
+    es.addEventListener('tag', function (e) {
+      var d = JSON.parse(e.data);
+      S.tracking = d.tracking_no; setText('tracking', d.tracking_no || '—');
+    });
+
+    es.addEventListener('stop', function () {
+      // ปล่อยชิ้นสุดท้ายออกจาก MediaRecorder ก่อนแล้วค่อยเคลียร์สถานะ
+      var id = S.clipId;
+      endRecorder();
+      setTimeout(function () { if (S.clipId === id) finishClip(); }, 400);
+      setRec(false);
+    });
+
+    es.addEventListener('mismatch', function (e) {
+      var d = JSON.parse(e.data);
+      $('banner-detail').textContent =
+        'ออเดอร์ ' + (d.ordersn || '—') + '\nควรเป็น ' + (d.expected || '—') + '\nสแกนได้ ' + (d.scanned || '—');
+      $('banner').classList.add('show');
+      beep();
+    });
+  }
+
+  // เตือนด้วยเสียงด้วย เพราะพนักงานกำลังก้มมองกล่อง ไม่ได้มองจอ
+  function beep() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.3, 0.6].forEach(function (t) {
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = 880; g.gain.value = 0.15;
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.18);
+      });
+    } catch (e) {}
+  }
+
+  function warn(msg) { $('warn').textContent = msg; $('warn').classList.add('show'); }
+  function clearWarn() { $('warn').classList.remove('show'); }
+
+  $('banner-ok').onclick = function () { $('banner').classList.remove('show'); };
+
+  // ── นาฬิกาและ heartbeat ─────────────────────────────────────
+  setInterval(function () {
+    if (!S.clipId || !S.startedAt) return;
+    var s = Math.floor((Date.now() - S.startedAt) / 1000);
+    setText('elapsed', Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'));
+  }, 500);
+
+  setInterval(function () {
+    fetch('/api/stations/' + encodeURIComponent(station) + '/heartbeat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: localStorage.getItem(K.client),
+        queue_depth: S.queue.length,
+        app_version: VERSION,
+      }),
+    }).catch(function () {});
+  }, 30000);
+
+  // ── กันหน้าปิดโดยไม่ตั้งใจ ──────────────────────────────────
+  window.addEventListener('beforeunload', function (e) {
+    if (S.clipId || S.queue.length) { e.preventDefault(); e.returnValue = ''; }
+    navigator.sendBeacon('/api/station/' + encodeURIComponent(station) + '/detach', new Blob([], {}));
+  });
+
+  // จอดับกลางกะแล้วกล้องอาจถูกปล่อย — ขอไม่ให้ดับ
+  if (navigator.wakeLock) {
+    navigator.wakeLock.request('screen').catch(function () {});
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') navigator.wakeLock.request('screen').catch(function () {});
+    });
+  }
+
+  setText('station', station);
+  startCamera()
+    .then(connect)
+    .catch(function (e) { warn('เปิดกล้องไม่ได้: ' + e.message); connect(); });
+})();
+</script>
+
+</body>
+</html>

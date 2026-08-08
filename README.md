@@ -64,6 +64,15 @@ BASE=https://packvideo.digital.in.th npm run smoke
 > และ **อย่าแก้ `MONGO_URL` ในไฟล์เอง** ใช้ `npm run set-mongo` เพราะรหัสผ่านที่มีอักขระพิเศษ
 > ต้อง percent-encode ก่อน
 
+## หน้าเว็บ
+
+| หน้า | ใคร | ทำอะไร |
+|---|---|---|
+| `/setup.html` | พนักงาน/IT | ตั้งโต๊ะ ชื่อเครื่อง และกล้อง — ครั้งเดียวต่อเครื่อง |
+| `/rec.html` | พนักงานแพ็ค | หน้าต่างอัด เปิดคาไว้ตลอดกะ **ห้าม navigate ออก** |
+| `/monitor.html` | หัวหน้าคลัง | สถานะทุกโต๊ะ อัตราคลิปต่อใบปะหน้า ดิสก์ การแจ้งเตือน |
+| `/hook.js` | — | สคริปต์ที่หน้าแพ็คของ sellcenter โหลด |
+
 ## โครงสร้าง
 
 ```
@@ -72,11 +81,34 @@ src/
   app.js           ประกอบ express
   config.js        อ่านค่าจาก env เท่านั้น + ตรวจค่าที่ขาดไม่ได้บน production
   db.js            ต่อ mongo แบบพยายามใหม่เรื่อยๆ ไม่ล้ม process
-  lib/storage.js   สถานะดิสก์และระดับ warn/squeeze/stop
-  routes/health.js /api/health · /api/health/live
+  lib/
+    clips.js       วงจรชีวิตคลิป · ต่อชิ้นวิดีโอ · checksum · metadata คู่ไฟล์
+    sse.js         ช่องส่งสัญญาณไปหน้าต่างอัด แยกตามโต๊ะ
+    stations.js    ทะเบียนโต๊ะ + กันตั้งซ้ำ
+    metrics.js     อัตราคลิปต่อใบปะหน้า (ตัวเลขที่ Gate 1 ใช้ตัดสิน)
+    monitor.js     กฎการเตือน 6 ข้อ
+    notify.js      Telegram (token จาก env เท่านั้น)
+    storage.js     สถานะดิสก์และระดับ warn/squeeze/stop
+  routes/          health · signal · stations · monitor · clips · media
+  public/          setup.html · rec.html · monitor.html · hook.js
+  dev/             หน้าจำลอง sellcenter ไว้ทดสอบ (ไม่ขึ้น production)
 deploy/nginx/      server block สำหรับ nginx ตัวที่มีอยู่แล้ว
 spikes/            การทดลองพิสูจน์สมมติฐาน
 ```
+
+## ทดสอบ
+
+```bash
+npm run smoke
+```
+
+```bash
+npm run e2e
+```
+
+`e2e` เดินวงจรชีวิตคลิปครบวงโดยไม่ต้องมีเบราว์เซอร์หรือกล้อง — จำลองทั้ง `hook.js`
+ที่ยิงสัญญาณและหน้าต่างอัดที่ส่งชิ้นวิดีโอ แล้วตรวจว่าไฟล์กับ metadata ลงดิสก์ถูกต้อง
+รวมถึงการขอดูช่วงกลางไฟล์ด้วย HTTP Range
 
 ## หลักการที่ห้ามละเมิด
 
