@@ -1,8 +1,10 @@
 import { createApp } from './app.js';
-import { config, validateConfig } from './config.js';
+import { config, validateConfig, configWarnings } from './config.js';
 import { log } from './log.js';
 import { connect, close as closeDb } from './db.js';
 import { ensureStorage, storageStatus } from './lib/storage.js';
+
+for (const warning of configWarnings()) log.warn(warning);
 
 const problems = validateConfig();
 if (problems.length) {

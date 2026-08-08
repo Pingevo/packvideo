@@ -57,12 +57,71 @@ export const config = {
   },
 };
 
+// คีย์ทั้งหมดที่ระบบรู้จัก — ใช้ดักคีย์ที่พิมพ์ผิด
+const KNOWN_KEYS = new Set([
+  'NODE_ENV', 'PORT', 'LOG_LEVEL',
+  'MONGO_URL', 'MONGO_DB',
+  'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
+  'RETENTION_DAYS', 'ALLOWED_ORIGINS',
+  'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
+]);
+
+/**
+ * เตือนเรื่องที่ทำให้เสียเวลาไล่หาสาเหตุ แต่ยังไม่ถึงกับหยุดระบบ
+ *
+ * สองข้อนี้เคยเกิดจริงตอนตั้งเครื่องพัฒนา: พิมพ์ `MMONGO_URL` เกินมาหนึ่งตัว
+ * แล้วระบบเงียบไปเฉยๆ เหมือนไม่ได้ตั้งค่า และวางค่าตัวอย่าง `<รหัสผ่าน>`
+ * ทิ้งไว้โดยไม่ได้แทนที่ ซึ่งดูเผินๆ เหมือนตั้งค่าครบแล้ว
+ * @returns {string[]}
+ */
+/** ระยะห่างของการแก้ไข — จำนวนตัวอักษรที่ต้องเพิ่ม/ลบ/เปลี่ยน เพื่อให้สองคำเท่ากัน */
+function editDistance(a, b) {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > 2) return 99;   // ต่างกันมากเกินกว่าจะเป็นการพิมพ์ผิด
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = a[i - 1] === b[j - 1]
+        ? prev[j - 1]
+        : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+export function configWarnings() {
+  const warnings = [];
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!KNOWN_KEYS.has(key)) {
+      // ต้องเป็นการ "พิมพ์ผิด" จริงๆ คือต่างกันไม่เกิน 2 ตัวอักษร
+      // การเทียบแบบ substring ใช้ไม่ได้ — PATH ของระบบจะไปเข้าคู่กับ PACK_VIDEO_PATH
+      // และ _ จะเข้าคู่กับทุกคีย์ที่มีขีดล่าง
+      if (key.length < 4) continue;
+      const near = [...KNOWN_KEYS].find((known) => editDistance(key, known) <= 2);
+      if (near) warnings.push(`มีคีย์ ${key} ซึ่งต่างจาก ${near} แค่ไม่กี่ตัวอักษร — พิมพ์ผิดหรือเปล่า`);
+      continue;
+    }
+    if (typeof value === 'string' && /<[^>]+>/.test(value)) {
+      warnings.push(`${key} ยังมีค่าตัวอย่างในวงเล็บมุมอยู่ — ยังไม่ได้แทนที่ด้วยค่าจริง`);
+    }
+  }
+  return warnings;
+}
+
 /**
  * ตรวจค่าที่ขาดไม่ได้บน production — ล้มตั้งแต่ตอน boot ดีกว่าไปพังตอนมีคนใช้งาน
  * @returns {string[]} รายการปัญหา — ว่างแปลว่าผ่าน
  */
 export function validateConfig() {
   const problems = [];
+
+  // ค่าตัวอย่างที่ยังไม่ได้แทนที่ = ตั้งค่าไม่เสร็จ ถือเป็นปัญหาไม่ว่าอยู่ environment ไหน
+  const placeholders = configWarnings().filter((w) => w.includes('วงเล็บมุม'));
+  problems.push(...placeholders);
+
   if (config.env !== 'production') return problems;
 
   if (!process.env.MONGO_URL) problems.push('MONGO_URL ไม่ได้ตั้ง');
