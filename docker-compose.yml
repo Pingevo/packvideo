@@ -1,0 +1,33 @@
+# รันเป็นอีก container บนเครื่องเดิมที่ sellcenter อยู่ — ไม่ต้องซื้อเซิร์ฟเวอร์ใหม่
+# ใช้ network เดียวกันเพื่อให้ sellcenter ยิง webhook เข้ามาได้โดยไม่ต้องออกไปข้างนอก
+services:
+  packvideo:
+    image: packvideo:latest
+    build: .
+    container_name: packvideo-app
+    restart: unless-stopped
+    ports:
+      - "1338:1338"
+    environment:
+      NODE_ENV: production
+      PORT: 1338
+      MONGO_URL: ${MONGO_URL}
+      MONGO_DB: packvideo
+      PACK_VIDEO_PATH: /data/pack_video
+      DISK_WARN_PCT: 75
+      DISK_SQUEEZE_PCT: 85
+      DISK_STOP_PCT: 90
+      RETENTION_DAYS: 30
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    volumes:
+      # HDD 1 TB ลูกที่ว่างอยู่ mount แยกต่างหาก
+      # ห้ามชี้ไปที่เดียวกับ FILESTORE_PATH ของ sellcenter — วิดีโอเต็มต้องไม่กระทบ filestore กับ mongo
+      - /mnt/packvideo:/data/pack_video
+    networks:
+      - sellcenter-network
+
+networks:
+  sellcenter-network:
+    external: true
