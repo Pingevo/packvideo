@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตั้งค่าเครื่อง — packvideo</title>
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.35); }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; padding: 28px 24px 48px; line-height: 1.55; max-width: 760px; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 13px; margin-bottom: 24px; }
+  section { border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  h2 { font-size: 14px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+  .hint { font-size: 12px; opacity: .65; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; margin: 12px 0 5px; font-weight: 600; }
+  input[type=text], select {
+    font: inherit; padding: 9px 11px; width: 100%; border-radius: 7px;
+    border: 1px solid var(--line); background: transparent; color: inherit;
+  }
+  button { font: inherit; padding: 10px 18px; border-radius: 7px; cursor: pointer; font-weight: 600;
+           border: 1px solid var(--line); background: transparent; color: inherit; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button.primary:disabled { opacity: .45; cursor: not-allowed; }
+  button.danger { border-color: #b62324; color: #b62324; }
+  .stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .st { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer;
+        text-align: left; font: inherit; background: transparent; color: inherit; }
+  .st[aria-pressed="true"] { border-color: #2563eb; box-shadow: inset 0 0 0 1px #2563eb; }
+  .st:disabled { opacity: .5; cursor: not-allowed; }
+  .st b { display: block; font-size: 15px; }
+  /* ชื่อเครื่องยาวๆ ต้องไม่ดันให้ช่องสูงไม่เท่ากันจนดูเหมือนหน้าพัง */
+  .st span { font-size: 11px; opacity: .7; display: block; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+  .dot.on { background: #1a7f37; } .dot.off { background: #9ca3af; } .dot.me { background: #2563eb; }
+  .msg { padding: 12px 14px; border-radius: 8px; margin-top: 14px; font-size: 13px; display: none; }
+  .msg.ok   { background: rgba(26,127,55,.12);  border: 1px solid rgba(26,127,55,.4);  display: block; }
+  .msg.bad  { background: rgba(182,35,36,.12);  border: 1px solid rgba(182,35,36,.4);  display: block; }
+  .msg.warn { background: rgba(154,103,0,.12);  border: 1px solid rgba(154,103,0,.4);  display: block; }
+  video { width: 260px; border-radius: 8px; border: 1px solid var(--line); margin-top: 10px; display: block; }
+  .current { font-size: 13px; }
+  .current dt { font-weight: 600; opacity: .6; font-size: 11px; text-transform: uppercase; margin-top: 10px; }
+  .current dd { margin: 2px 0 0; font-family: ui-monospace, Menlo, monospace; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>ตั้งค่าเครื่องโต๊ะแพ็ค</h1>
+<div class="sub">ตั้งครั้งเดียวต่อเครื่อง · ค่าถูกจำไว้ในเบราว์เซอร์นี้</div>
+
+<section id="sec-current" style="display:none">
+  <h2>ค่าปัจจุบันของเครื่องนี้</h2>
+  <dl class="current" id="current"></dl>
+  <p style="margin-top:16px"><button class="danger" id="btn-release">ล้างค่าเครื่องนี้</button></p>
+</section>
+
+<section>
+  <h2>1 · เลือกโต๊ะ</h2>
+  <p class="hint">
+    เครื่องหนึ่งเป็นได้โต๊ะเดียว และโต๊ะหนึ่งมีได้เครื่องเดียว —
+    ถ้าเลือกโต๊ะที่เครื่องอื่นใช้อยู่ ระบบจะบอกว่าชนกับเครื่องไหน
+  </p>
+  <div class="stations" id="stations">กำลังโหลด…</div>
+</section>
+
+<section>
+  <h2>2 · ตั้งชื่อเครื่อง</h2>
+  <p class="hint">ใช้ตอนที่มีเครื่องตั้งโต๊ะซ้ำกัน จะได้รู้ว่าต้องไปตามหาเครื่องไหน</p>
+  <label for="device">ชื่อเครื่อง</label>
+  <input type="text" id="device" placeholder="เช่น คอมโต๊ะ 3 ริมหน้าต่าง" maxlength="60">
+</section>
+
+<section>
+  <h2>3 · เลือกกล้อง</h2>
+  <p class="hint">
+    ต้องกดอนุญาตใช้กล้องก่อนถึงจะเห็นรายชื่อ · ถ้าเครื่องมีกล้องตัวเดียวก็เลือกตัวนั้น
+  </p>
+  <p><button id="btn-cam">ขออนุญาตใช้กล้อง</button></p>
+  <label for="camera">กล้อง</label>
+  <select id="camera"><option value="">— ยังไม่ได้ขออนุญาต —</option></select>
+  <video id="preview" autoplay muted playsinline style="display:none"></video>
+</section>
+
+<section>
+  <h2>4 · บันทึก</h2>
+  <p><button class="primary" id="btn-save" disabled>บันทึกการตั้งค่า</button></p>
+  <div class="msg" id="msg"></div>
+</section>
+
+<script>
+(function () {
+  'use strict';
+
+  var K = {
+    station: 'packvideo.station_id',
+    token: 'packvideo.token',
+    client: 'packvideo.client_id',
+    device: 'packvideo.device_name',
+    camera: 'packvideo.camera_id',
+  };
+
+  var state = { selected: null, stations: [], stream: null };
+
+  function $(id) { return document.getElementById(id); }
+  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+  // client_id ระบุ "เครื่อง+เบราว์เซอร์นี้" ใช้ตัดสินว่าใครถือโต๊ะอยู่
+  var clientId = get(K.client);
+  if (!clientId) {
+    clientId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    set(K.client, clientId);
+  }
+
+  function msg(kind, html) {
+    var el = $('msg');
+    el.className = 'msg ' + kind;
+    el.innerHTML = html;
+  }
+
+  // ── โต๊ะ ────────────────────────────────────────────────────
+  function renderStations() {
+    var wrap = $('stations');
+    wrap.innerHTML = '';
+    state.stations.forEach(function (s) {
+      var mine = s.client_id === clientId;
+      var busy = s.connected && !mine;
+      var b = document.createElement('button');
+      b.className = 'st';
+      b.type = 'button';
+      b.disabled = busy;
+      if (busy) b.title = 'ใช้อยู่โดย ' + (s.device_name || 'เครื่องที่ไม่ทราบชื่อ');
+      b.setAttribute('aria-pressed', String(state.selected === s.station_id));
+      var dot = mine ? 'me' : (s.connected ? 'on' : 'off');
+      var note = mine ? 'เครื่องนี้'
+        : s.connected ? ('ใช้อยู่: ' + (s.device_name || 'ไม่ทราบ'))
+        : (s.stale ? 'ว่าง (เครื่องเดิมเงียบไป)' : 'ว่าง');
+      b.innerHTML = '<b>' + s.station_id + '</b><span><i class="dot ' + dot + '"></i>' + note + '</span>';
+      b.onclick = function () {
+        state.selected = s.station_id;
+        renderStations();
+        $('btn-save').disabled = false;
+      };
+      wrap.appendChild(b);
+    });
+  }
+
+  function loadStations() {
+    return fetch('/api/stations')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { state.stations = d.stations || []; renderStations(); })
+      .catch(function () { $('stations').textContent = 'โหลดรายชื่อโต๊ะไม่สำเร็จ'; });
+  }
+
+  // ── กล้อง ───────────────────────────────────────────────────
+  // ชื่อกล้องจะถูกซ่อนจนกว่าจะได้รับอนุญาต จึงต้องขอสิทธิ์ก่อนแล้วค่อยไล่รายชื่อ
+  function askCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      msg('bad', 'เบราว์เซอร์นี้ใช้กล้องไม่ได้ — ต้องเปิดผ่าน https หรือ localhost เท่านั้น');
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      .then(function (stream) {
+        state.stream = stream;
+        $('preview').srcObject = stream;
+        $('preview').style.display = 'block';
+        return navigator.mediaDevices.enumerateDevices();
+      })
+      .then(function (devices) {
+        var sel = $('camera');
+        sel.innerHTML = '';
+        var cams = devices.filter(function (d) { return d.kind === 'videoinput'; });
+        if (!cams.length) { sel.innerHTML = '<option value="">— ไม่พบกล้อง —</option>'; return; }
+        cams.forEach(function (c, i) {
+          var o = document.createElement('option');
+          o.value = c.deviceId;
+          o.textContent = c.label || ('กล้องที่ ' + (i + 1));
+          sel.appendChild(o);
+        });
+        var saved = get(K.camera);
+        if (saved) sel.value = saved;
+        sel.onchange = switchPreview;
+        switchPreview();
+      })
+      .catch(function (e) {
+        msg('bad', 'ขออนุญาตใช้กล้องไม่สำเร็จ: ' + (e && e.message));
+      });
+  }
+
+  function switchPreview() {
+    var id = $('camera').value;
+    if (!id) return;
+    if (state.stream) state.stream.getTracks().forEach(function (t) { t.stop(); });
+    navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: id } }, audio: false })
+      .then(function (s) { state.stream = s; $('preview').srcObject = s; })
+      .catch(function () {});
+  }
+
+  // ── บันทึก ──────────────────────────────────────────────────
+  function save() {
+    if (!state.selected) return;
+    var deviceName = ($('device').value || '').trim();
+    if (!deviceName) { msg('warn', 'ตั้งชื่อเครื่องก่อน — ใช้ตอนที่ต้องไล่หาว่าเครื่องไหนตั้งซ้ำ'); return; }
+
+    $('btn-save').disabled = true;
+    fetch('/api/stations/' + encodeURIComponent(state.selected) + '/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, device_name: deviceName }),
+    })
+      .then(function (r) { return r.json().then(function (d) { return { status: r.status, d: d }; }); })
+      .then(function (res) {
+        $('btn-save').disabled = false;
+        if (res.status === 409) {
+          var h = res.d.held_by || {};
+          msg('bad',
+            '<b>ตั้งไม่ได้ — โต๊ะนี้มีเครื่องอื่นใช้อยู่</b><br>' +
+            'เครื่อง: <code>' + (h.device_name || 'ไม่ทราบชื่อ') + '</code><br>' +
+            'ที่อยู่: <code>' + (h.ip || '-') + '</code><br>' +
+            'เห็นล่าสุด: ' + (h.last_seen_at ? new Date(h.last_seen_at).toLocaleTimeString('th-TH') : '-') +
+            '<br><br>ไปปิดหน้าตั้งค่าที่เครื่องนั้นก่อน หรือเลือกโต๊ะอื่น');
+          return loadStations();
+        }
+        if (!res.d.ok) { msg('bad', res.d.error || 'บันทึกไม่สำเร็จ'); return; }
+
+        set(K.station, state.selected);
+        set(K.device, deviceName);
+        if ($('camera').value) set(K.camera, $('camera').value);
+        // token จริงออกให้ต่อโต๊ะใน P1-4 — ตอนนี้ใช้ค่าชั่วคราวเพื่อให้ hook.js ทำงานได้
+        if (!get(K.token)) set(K.token, 'dev-token');
+
+        var took = res.d.station && res.d.station.took_over_from;
+        msg('ok', '<b>บันทึกแล้ว</b> — เครื่องนี้คือ <code>' + state.selected + '</code>' +
+          (took ? '<br>รับช่วงต่อจากเครื่อง <code>' + took + '</code> ที่เงียบไป' : ''));
+        showCurrent();
+        loadStations();
+      })
+      .catch(function (e) {
+        $('btn-save').disabled = false;
+        msg('bad', 'ติดต่อเซิร์ฟเวอร์ไม่ได้: ' + (e && e.message));
+      });
+  }
+
+  function release() {
+    var st = get(K.station);
+    if (!st) return;
+    fetch('/api/stations/' + encodeURIComponent(st) + '/release', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId }),
+    }).catch(function () {}).then(function () {
+      del(K.station); del(K.device); del(K.camera);
+      msg('warn', 'ล้างค่าแล้ว — เครื่องนี้ยังไม่ได้ตั้งเป็นโต๊ะไหน');
+      showCurrent();
+      loadStations();
+    });
+  }
+
+  function showCurrent() {
+    var st = get(K.station);
+    $('sec-current').style.display = st ? 'block' : 'none';
+    if (!st) return;
+    $('current').innerHTML =
+      '<dt>โต๊ะ</dt><dd>' + st + '</dd>' +
+      '<dt>ชื่อเครื่อง</dt><dd>' + (get(K.device) || '-') + '</dd>' +
+      '<dt>รหัสเครื่อง</dt><dd>' + clientId.slice(0, 8) + '…</dd>';
+  }
+
+  // ── ส่งสัญญาณว่ายังอยู่ ─────────────────────────────────────
+  // ไม่งั้นการจับจองหมดอายุใน 90 วินาที แล้วเครื่องอื่นแย่งโต๊ะไปได้ทั้งที่เครื่องนี้เปิดค้างอยู่
+  setInterval(function () {
+    var st = get(K.station);
+    if (!st) return;
+    fetch('/api/stations/' + encodeURIComponent(st) + '/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId }),
+    }).then(function (r) { if (r.status === 409) loadStations(); }).catch(function () {});
+  }, 30000);
+
+  $('btn-cam').onclick = askCamera;
+  $('btn-save').onclick = save;
+  $('btn-release').onclick = release;
+  $('device').value = get(K.device) || '';
+
+  showCurrent();
+  loadStations().then(function () {
+    var st = get(K.station);
+    if (st) { state.selected = st; renderStations(); $('btn-save').disabled = false; }
+  });
+  setInterval(loadStations, 15000);
+})();
+</script>
+
+</body>
+</html>

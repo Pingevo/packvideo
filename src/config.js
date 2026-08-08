@@ -48,6 +48,14 @@ export const config = {
 
   retentionDays: int('RETENTION_DAYS', 30),
 
+  // รายชื่อโต๊ะที่เลือกได้ในหน้าตั้งค่า — คลังมี 6 โต๊ะขึ้นไป
+  stations: (() => {
+    const listed = list('STATIONS');
+    if (listed.length) return listed;
+    const n = int('STATION_COUNT', 6);
+    return Array.from({ length: n }, (_, i) => `desk-${String(i + 1).padStart(2, '0')}`);
+  })(),
+
   // origin ของระบบเดิมที่อนุญาตให้ยิงสัญญาณเข้ามา — ระบุตรงๆ ไม่ใช้ '*'
   allowedOrigins: list('ALLOWED_ORIGINS'),
 
@@ -62,7 +70,7 @@ const KNOWN_KEYS = new Set([
   'NODE_ENV', 'PORT', 'LOG_LEVEL',
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
-  'RETENTION_DAYS', 'ALLOWED_ORIGINS',
+  'RETENTION_DAYS', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
 ]);
 

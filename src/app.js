@@ -5,6 +5,7 @@ import { log } from './log.js';
 import { config } from './config.js';
 import { healthRouter } from './routes/health.js';
 import { signalRouter, signalCors } from './routes/signal.js';
+import { stationsRouter } from './routes/stations.js';
 import { devRouter } from './dev/routes.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
@@ -25,6 +26,7 @@ export function createApp() {
   );
 
   app.use('/api', healthRouter);
+  app.use('/api', stationsRouter);
 
   app.use(signalCors);
   app.use(signalRouter);
