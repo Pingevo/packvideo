@@ -1,0 +1,16 @@
+node_modules/
+npm-debug.log*
+.env
+.env.*
+!.env.example
+
+# ข้อมูลวิดีโอห้ามเข้า repo เด็ดขาด
+/data/
+*.mp4
+*.webm
+*.part
+
+.DS_Store
+*.swp
+.idea/
+.vscode/

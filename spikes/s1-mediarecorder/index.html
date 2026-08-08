@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S1 · MediaRecorder MP4 Spike — packvideo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; padding: 24px; line-height: 1.55; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 13px; margin-bottom: 20px; }
+  section { border: 1px solid rgba(128,128,128,.35); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(128,128,128,.2); }
+  th { font-weight: 600; opacity: .75; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .ok   { color: #1a7f37; font-weight: 600; }
+  .bad  { color: #b62324; font-weight: 600; }
+  .warn { color: #9a6700; font-weight: 600; }
+  .verdict { font-size: 16px; padding: 14px 16px; border-radius: 8px; margin-bottom: 16px; }
+  .verdict.pass { background: rgba(26,127,55,.12);  border: 1px solid rgba(26,127,55,.4); }
+  .verdict.fail { background: rgba(182,35,36,.12);  border: 1px solid rgba(182,35,36,.4); }
+  .verdict.pend { background: rgba(154,103,0,.12);  border: 1px solid rgba(154,103,0,.4); }
+  canvas { border: 1px solid rgba(128,128,128,.35); border-radius: 4px; }
+  video  { max-width: 320px; border: 1px solid rgba(128,128,128,.35); border-radius: 4px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .muted { opacity: .65; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>S1 · ทดสอบว่าเบราว์เซอร์อัด MP4/H.264 ได้ไหม</h1>
+<div class="sub">
+  ตรวจสมมติฐาน <b>D2</b> ใน <code>docs/design.md</code> — ถ้าอัดเป็น MP4 ได้ตรงจากเบราว์เซอร์
+  จะไม่ต้องแปลงไฟล์ตอนเก็บ เหลือแปลงเฉพาะตอนส่งออก
+</div>
+
+<div id="verdict" class="verdict pend">⏳ กำลังทดสอบ…</div>
+
+<section>
+  <h2>1 · ฟอร์แมตที่รองรับ (<code>MediaRecorder.isTypeSupported</code>)</h2>
+  <table id="tbl-support"><thead>
+    <tr><th style="width:60px">ลำดับ</th><th>MIME type</th><th style="width:110px">ผล</th></tr>
+  </thead><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>2 · อัดจริงจาก canvas 6 วินาที (timeslice 1000 ms)</h2>
+  <div class="muted" style="margin-bottom:10px">
+    ใช้ <code>canvas.captureStream()</code> แทนกล้อง — ทดสอบเส้นทางเดียวกับของจริงได้โดยไม่ต้องมีกล้อง
+    ทั้งการแบ่งชิ้น (D3) และการต่อชิ้นกลับเป็นไฟล์เดียว
+  </div>
+  <div class="row">
+    <canvas id="cv" width="320" height="180"></canvas>
+    <video id="pv" controls muted playsinline></video>
+  </div>
+  <table id="tbl-rec" style="margin-top:14px"><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>3 · สภาพแวดล้อม</h2>
+  <table id="tbl-env"><tbody></tbody></table>
+</section>
+
+<section>
+  <h2>4 · ผลแบบ JSON (สำหรับแนบเข้าเอกสาร)</h2>
+  <pre id="json" style="font-size:11px; overflow:auto; max-height:280px; margin:0"></pre>
+</section>
+
+<script>
+(function () {
+  'use strict';
+
+  // เรียงตามลำดับความชอบใน design.md §7.1
+  var CANDIDATES = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ];
+
+  var RESULT = {
+    ran_at: new Date().toISOString(),
+    user_agent: navigator.userAgent,
+    secure_context: window.isSecureContext,
+    has_mediarecorder: typeof window.MediaRecorder !== 'undefined',
+    support: {},
+    chosen: null,
+    recording: null,
+    verdict: 'pending'
+  };
+  window.__S1_RESULT = RESULT;
+
+  function el(id) { return document.getElementById(id); }
+  function row(tbody, k, v, cls) {
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.innerHTML = k;
+    var td2 = document.createElement('td'); td2.innerHTML = v; if (cls) td2.className = cls;
+    tr.appendChild(td1); tr.appendChild(td2); tbody.appendChild(tr);
+  }
+
+  // ── สภาพแวดล้อม ─────────────────────────────────────────────
+  var envBody = el('tbl-env').querySelector('tbody');
+  row(envBody, 'User agent', '<code>' + navigator.userAgent + '</code>');
+  row(envBody, 'Secure context', window.isSecureContext ? 'true' : 'false',
+      window.isSecureContext ? 'ok' : 'bad');
+  row(envBody, 'มี MediaRecorder', RESULT.has_mediarecorder ? 'true' : 'false',
+      RESULT.has_mediarecorder ? 'ok' : 'bad');
+  row(envBody, 'CPU cores', navigator.hardwareConcurrency || 'ไม่ทราบ');
+
+  if (!RESULT.has_mediarecorder) {
+    RESULT.verdict = 'fail_no_mediarecorder';
+    el('verdict').className = 'verdict fail';
+    el('verdict').textContent = '❌ เบราว์เซอร์นี้ไม่มี MediaRecorder เลย';
+    el('json').textContent = JSON.stringify(RESULT, null, 2);
+    return;
+  }
+
+  // ── 1 · isTypeSupported ─────────────────────────────────────
+  var supBody = el('tbl-support').querySelector('tbody');
+  CANDIDATES.forEach(function (m, i) {
+    var ok = false;
+    try { ok = MediaRecorder.isTypeSupported(m); } catch (e) { ok = false; }
+    RESULT.support[m] = ok;
+    if (!RESULT.chosen && ok) RESULT.chosen = m;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + (i + 1) + '</td><td><code>' + m + '</code></td>' +
+      '<td class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✅ รองรับ' : '— ไม่รองรับ') + '</td>';
+    supBody.appendChild(tr);
+  });
+
+  var mp4Supported = Object.keys(RESULT.support).some(function (m) {
+    return m.indexOf('video/mp4') === 0 && RESULT.support[m];
+  });
+  RESULT.mp4_supported = mp4Supported;
+
+  if (!RESULT.chosen) {
+    RESULT.verdict = 'fail_no_format';
+    el('verdict').className = 'verdict fail';
+    el('verdict').textContent = '❌ ไม่รองรับฟอร์แมตใดเลย';
+    el('json').textContent = JSON.stringify(RESULT, null, 2);
+    return;
+  }
+
+  // ── 2 · อัดจริง ─────────────────────────────────────────────
+  var cv = el('cv'), ctx = cv.getContext('2d');
+  var t0 = performance.now();
+  var framesPushed = 0;
+
+  // captureStream(0) + requestFrame() = เราคุมจำนวนเฟรมเองทั้งหมด
+  // ห้ามใช้ requestAnimationFrame เพราะมันหยุดเดินเมื่อแท็บไม่ได้เรนเดอร์
+  // แล้วจะได้คลิปเปล่าโดยที่การทดสอบยังขึ้นว่าผ่าน
+  var stream = cv.captureStream(0);
+  var vtrack = stream.getVideoTracks()[0];
+
+  function drawFrame() {
+    var t = (performance.now() - t0) / 1000;
+    ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, cv.width, cv.height);
+    // แถบเคลื่อนที่ ให้ตัวเข้ารหัสมีอะไรให้บีบจริงๆ ไม่ใช่ภาพนิ่งล้วน
+    ctx.fillStyle = '#4a9eff';
+    ctx.fillRect((t * 90) % cv.width, 40, 70, 70);
+    ctx.fillStyle = '#fff'; ctx.font = '16px monospace';
+    ctx.fillText('S1 spike  t=' + t.toFixed(2) + 's', 12, 26);
+    ctx.fillText('SPX1234567890', 12, 160);
+    if (vtrack.requestFrame) { vtrack.requestFrame(); framesPushed++; }
+  }
+  var drawTimer = setInterval(drawFrame, 40);   // 25 fps
+  drawFrame();
+
+  var rec, chunks = [], chunkSizes = [], startedAt;
+
+  try {
+    rec = new MediaRecorder(stream, { mimeType: RESULT.chosen, videoBitsPerSecond: 1000000 });
+  } catch (e) {
+    RESULT.verdict = 'fail_construct';
+    RESULT.recording = { error: String(e) };
+    el('verdict').className = 'verdict fail';
+    el('verdict').textContent = '❌ สร้าง MediaRecorder ไม่ได้: ' + e;
+    el('json').textContent = JSON.stringify(RESULT, null, 2);
+    return;
+  }
+
+  rec.ondataavailable = function (e) {
+    if (e.data && e.data.size) { chunks.push(e.data); chunkSizes.push(e.data.size); }
+  };
+
+  rec.onstop = function () {
+    clearInterval(drawTimer);
+    var elapsed = (performance.now() - startedAt) / 1000;
+    // ต่อชิ้นทั้งหมดกลับเป็นไฟล์เดียว — จำลองสิ่งที่เซิร์ฟเวอร์ทำใน D3
+    var blob = new Blob(chunks, { type: RESULT.chosen.split(';')[0] });
+    var url = URL.createObjectURL(blob);
+    var v = el('pv');
+    v.src = url;
+
+    var recBody = el('tbl-rec').querySelector('tbody');
+    var kbps = (blob.size * 8 / 1000 / elapsed);
+    // ประมาณขนาดต่อคลิปจริงที่ความยาวเฉลี่ย 105 วินาที (NFR-2)
+    var est105 = (blob.size / elapsed) * 105 / (1024 * 1024);
+
+    RESULT.recording = {
+      mime: RESULT.chosen,
+      elapsed_s: +elapsed.toFixed(2),
+      frames_pushed: framesPushed,
+      visibility: document.visibilityState,
+      chunk_count: chunks.length,
+      chunk_sizes: chunkSizes,
+      total_bytes: blob.size,
+      measured_kbps: +kbps.toFixed(0),
+      est_mb_at_105s: +est105.toFixed(2)
+    };
+
+    row(recBody, 'ฟอร์แมตที่ใช้', '<code>' + RESULT.chosen + '</code>');
+    row(recBody, 'ความยาวที่อัด', elapsed.toFixed(2) + ' วินาที');
+    row(recBody, 'เฟรมที่ป้อนเข้า stream', framesPushed + ' เฟรม <span class="muted">(คาดหวัง ~' +
+        Math.round(elapsed * 25) + ')</span>', framesPushed >= elapsed * 10 ? 'ok' : 'bad');
+    row(recBody, 'visibilityState ตอนอัด', document.visibilityState,
+        document.visibilityState === 'visible' ? 'ok' : 'warn');
+    row(recBody, 'จำนวนชิ้น', chunks.length + ' ชิ้น <span class="muted">(' +
+        chunkSizes.map(function (s) { return (s / 1024).toFixed(0) + 'KB'; }).join(' · ') + ')</span>',
+        chunks.length >= 2 ? 'ok' : 'warn');
+    row(recBody, 'ขนาดรวม', (blob.size / 1024).toFixed(0) + ' KB');
+    row(recBody, 'bitrate ที่วัดได้', kbps.toFixed(0) + ' kbps <span class="muted">(ขอไว้ 1000)</span>');
+    row(recBody, 'ประมาณขนาดคลิปจริงที่ 105 วิ',
+        est105.toFixed(2) + ' MB <span class="muted">(งบตาม NFR-2.1 คือ ≤ 13 MB)</span>',
+        est105 <= 13 ? 'ok' : 'warn');
+
+    v.onloadedmetadata = function () {
+      var playable = isFinite(v.duration) && v.duration > 0;
+      RESULT.recording.playable = playable;
+      RESULT.recording.decoded_duration_s = isFinite(v.duration) ? +v.duration.toFixed(2) : null;
+      row(recBody, 'ไฟล์ที่ต่อกลับเล่นได้',
+          playable ? '✅ ใช่ (' + v.duration.toFixed(2) + ' วิ)' : '❌ ไม่ได้',
+          playable ? 'ok' : 'bad');
+      finish(playable);
+    };
+    v.onerror = function () {
+      RESULT.recording.playable = false;
+      row(recBody, 'ไฟล์ที่ต่อกลับเล่นได้', '❌ ไม่ได้ — decode ไม่ผ่าน', 'bad');
+      finish(false);
+    };
+    // กันกรณี metadata ไม่มา
+    setTimeout(function () {
+      if (RESULT.recording.playable === undefined) {
+        RESULT.recording.playable = null;
+        row(recBody, 'ไฟล์ที่ต่อกลับเล่นได้', '⚠️ ไม่ทราบ — ไม่มี metadata', 'warn');
+        finish(null);
+      }
+    }, 4000);
+  };
+
+  function finish(playable) {
+    if (RESULT.verdict !== 'pending') return;
+    var v = el('verdict'), r = RESULT.recording;
+
+    // เกณฑ์ต้องแน่นพอที่คลิปเปล่าจะไม่ผ่าน — รอบแรกของ spike นี้เคยขึ้น "ผ่าน"
+    // ทั้งที่ได้ไฟล์ 3 KB ยาว 0.03 วิ เพราะเช็คแค่ playable กับจำนวนชิ้น
+    var dur = r.decoded_duration_s;
+    var durOk    = dur != null && dur >= r.elapsed_s * 0.8;   // ความยาวที่ decode ได้ต้องใกล้ของจริง
+    var chunkOk  = r.chunk_count >= 4;                        // 6 วิ timeslice 1 วิ ต้องได้ ≥4 ชิ้น
+    var framesOk = r.frames_pushed >= r.elapsed_s * 10;       // ป้อนเฟรมเข้าไปจริง
+    var sizeOk   = r.total_bytes >= 20000;                    // 6 วิ ที่ 1 Mbps ต้องหลักหลายร้อย KB
+
+    RESULT.checks = { durOk: durOk, chunkOk: chunkOk, framesOk: framesOk, sizeOk: sizeOk,
+                      mp4: RESULT.mp4_supported };
+    var recOk = durOk && chunkOk && framesOk && sizeOk;
+
+    function why() {
+      var f = [];
+      if (!framesOk) f.push('ป้อนเฟรมเข้า stream ไม่ได้ (แท็บอาจไม่ได้เรนเดอร์)');
+      if (!sizeOk)   f.push('ไฟล์เล็กผิดปกติ');
+      if (!durOk)    f.push('ความยาวที่ decode ได้ไม่ตรงกับที่อัด');
+      if (!chunkOk)  f.push('แบ่งชิ้นได้น้อยเกินไป');
+      return f.join(' · ');
+    }
+
+    if (recOk && RESULT.mp4_supported) {
+      RESULT.verdict = 'pass';
+      v.className = 'verdict pass';
+      v.innerHTML = '✅ <b>ผ่าน</b> — อัดเป็น MP4/H.264 ได้ตรง และต่อชิ้นกลับเป็นไฟล์ที่เล่นได้เต็มความยาว<br>' +
+        '<span class="muted">D2 + D3 ยืนยันแล้ว: ไม่ต้องมีคิวแปลงไฟล์ในเส้นทางหลัก</span>';
+    } else if (recOk) {
+      RESULT.verdict = 'pass_webm_only';
+      v.className = 'verdict pend';
+      v.innerHTML = '⚠️ <b>ผ่านบางส่วน</b> — อัดและต่อชิ้นได้ แต่ได้แค่ WebM ไม่ใช่ MP4<br>' +
+        '<span class="muted">ต้องเพิ่มงานคิวแปลงไฟล์กลางคืนเข้าเฟส 2a (+2 วัน)</span>';
+    } else if (RESULT.mp4_supported && !framesOk) {
+      RESULT.verdict = 'inconclusive';
+      v.className = 'verdict pend';
+      v.innerHTML = '⚠️ <b>สรุปไม่ได้</b> — ' + why() + '<br>' +
+        '<span class="muted">รองรับ MP4 (ข้อ 1 ผ่าน) แต่การอัดจริงยังพิสูจน์ไม่ได้ ' +
+        'ต้องเปิดหน้านี้ในเบราว์เซอร์ที่เห็นหน้าจอจริง</span>';
+    } else {
+      RESULT.verdict = 'fail';
+      v.className = 'verdict fail';
+      v.innerHTML = '❌ <b>ไม่ผ่าน</b> — ' + why();
+    }
+    el('json').textContent = JSON.stringify(RESULT, null, 2);
+    window.__S1_DONE = true;
+  }
+
+  // แท็บที่ถูกซ่อนอยู่จะโดน throttle ทั้ง setInterval และ timeslice ของ MediaRecorder
+  // ผลที่ได้จะเป็นคลิปเกือบเปล่าและตัวเลข bitrate ใช้ไม่ได้ → รอจนแท็บถูกมองเห็นก่อนค่อยเริ่ม
+  function beginRecording() {
+    startedAt = performance.now();
+    t0 = performance.now();
+    framesPushed = 0;                    // นับเฉพาะเฟรมที่ป้อนระหว่างอัดจริง
+    rec.start(1000);                     // timeslice 1000 ms → ทดสอบการแบ่งชิ้นตาม D3
+    setTimeout(function () { if (rec.state !== 'inactive') rec.stop(); }, 6000);
+  }
+
+  if (document.visibilityState === 'visible') {
+    beginRecording();
+  } else {
+    var vEl = el('verdict');
+    vEl.className = 'verdict pend';
+    vEl.innerHTML = '⏸️ <b>รอแท็บนี้ถูกแสดงบนหน้าจอ</b><br>' +
+      '<span class="muted">แท็บที่ซ่อนอยู่ถูก throttle จนได้คลิปเกือบเปล่า — ' +
+      'กดมาที่แท็บนี้แล้วการทดสอบจะเริ่มเอง</span>';
+    document.addEventListener('visibilitychange', function onVis() {
+      if (document.visibilityState === 'visible') {
+        document.removeEventListener('visibilitychange', onVis);
+        el('verdict').innerHTML = '⏳ กำลังทดสอบ…';
+        beginRecording();
+      }
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
