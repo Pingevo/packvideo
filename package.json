@@ -9,9 +9,13 @@
     "node": ">=22"
   },
   "scripts": {
+    "prestart": "node scripts/check-node.cjs",
     "start": "node --env-file-if-exists=.env src/server.js",
+    "predev": "node scripts/check-node.cjs",
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "presmoke": "node scripts/check-node.cjs",
     "smoke": "node scripts/smoke.mjs",
+    "preset-mongo": "node scripts/check-node.cjs",
     "set-mongo": "node scripts/set-mongo-url.mjs"
   },
   "dependencies": {
