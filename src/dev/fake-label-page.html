@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>จำลองหน้าใบปะหน้า — ทดสอบสัญญาณ tag</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif; margin: 0; padding: 24px; line-height: 1.5; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 13px; margin-bottom: 18px; }
+  section { border: 1px solid rgba(128,128,128,.35); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .muted { opacity: .6; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>จำลองหน้าใบปะหน้า</h1>
+<div class="sub">
+  ทดสอบว่า hook อ่าน <code>tracking_no</code> ได้ทั้งจาก <code>window.arr_tracking</code>
+  และจาก id ของ <code>&lt;svg&gt;</code> — และยิงสัญญาณ <code>tag</code> ซึ่งเป็น
+  <b>ตัวหารของ health check</b> (design D6)
+</div>
+
+<section>
+  <h2 style="font-size:14px;margin:0 0 10px">โครงที่คัดมาจาก airways_hot_test2.ejs</h2>
+  <div class="muted">
+    หน้าจริงประกาศ <code>arr_tracking</code> ไว้ก่อน แล้วเติมด้วย
+    <code>arr_tracking.push("&lt;%-tracking_no%&gt;")</code> แบบ inline ระหว่างเรนเดอร์
+    และสร้าง <code>&lt;svg id="svg_{tracking_no}"&gt;</code> ไว้ให้ JsBarcode วาด
+  </div>
+  <p>ผู้ใช้: <b id="lblUser">tester</b></p>
+  <p>ช่องรับสแกนปิดกล่องของหน้าจริง: <input type="text" id="txt_close" style="font:inherit;padding:6px 10px"></p>
+</section>
+
+<section>
+  <h2 style="font-size:14px;margin:0 0 10px">สัญญาณที่ยิงออกไป</h2>
+  <pre id="out" style="margin:0;font-size:12px">— ยังไม่มี —</pre>
+</section>
+
+<script>
+  localStorage.setItem('packvideo.station_id', 'desk-dev');
+  localStorage.setItem('packvideo.token', 'dev-token');
+
+  var _beacon = navigator.sendBeacon.bind(navigator);
+  navigator.sendBeacon = function (url, body) {
+    try {
+      if (body instanceof URLSearchParams) {
+        var o = {};
+        body.forEach(function (v, k) { if (k !== 't') o[k] = v; });
+        var el = document.getElementById('out');
+        if (el.textContent.indexOf('—') === 0) el.textContent = '';
+        el.textContent += JSON.stringify(o) + '\n';
+      }
+    } catch (e) {}
+    return _beacon(url, body);
+  };
+
+  // ── เหมือนหน้าจริง: ประกาศตัวแปรไว้ก่อน แล้ว push ระหว่างเรนเดอร์ ──
+  var arr_tracking = [];
+</script>
+
+<script>
+  // บรรทัดนี้คือสิ่งที่ EJS เรนเดอร์ออกมา inline กลางตาราง
+  arr_tracking.push("SPX123456789");
+</script>
+
+<svg id="svg_SPX123456789" width="200" height="50"></svg>
+
+<!-- โหลดแบบเดียวกับหน้าจริง — async จึงไม่รับประกันว่ามาก่อนหรือหลัง push -->
+<script async src="/hook.js"></script>
+
+<script>
+  document.getElementById('txt_close').focus();
+</script>
+
+</body>
+</html>

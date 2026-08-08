@@ -118,11 +118,12 @@ export function configWarnings() {
 export function validateConfig() {
   const problems = [];
 
-  // ค่าตัวอย่างที่ยังไม่ได้แทนที่ = ตั้งค่าไม่เสร็จ ถือเป็นปัญหาไม่ว่าอยู่ environment ไหน
-  const placeholders = configWarnings().filter((w) => w.includes('วงเล็บมุม'));
-  problems.push(...placeholders);
-
+  // บนเครื่องพัฒนา ค่าที่ยังไม่ได้ตั้งเป็นเรื่องปกติ — เตือนพอ ไม่หยุดระบบ
+  // เพราะบริการต้องขึ้นได้แม้ยังต่อ Mongo ไม่ได้ ไม่งั้นเสียหน้า monitor ไปด้วย
   if (config.env !== 'production') return problems;
+
+  // บน production ค่าตัวอย่างที่ยังไม่ได้แทนที่ = ตั้งค่าไม่เสร็จ ต้องหยุด
+  problems.push(...configWarnings().filter((w) => w.includes('วงเล็บมุม')));
 
   if (!process.env.MONGO_URL) problems.push('MONGO_URL ไม่ได้ตั้ง');
   if (!process.env.PACK_VIDEO_PATH) problems.push('PACK_VIDEO_PATH ไม่ได้ตั้ง');

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>จำลองหน้า /shopee/imei — ทดสอบ hook.js</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif; margin: 0; padding: 24px; line-height: 1.5; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 13px; margin-bottom: 18px; }
+  section { border: 1px solid rgba(128,128,128,.35); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  input[type=text] { font: inherit; padding: 8px 10px; width: 320px; border-radius: 6px;
+                     border: 1px solid rgba(128,128,128,.5); background: transparent; color: inherit; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 6px;
+           border: 1px solid rgba(128,128,128,.5); background: transparent; color: inherit; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(128,128,128,.2); }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .muted { opacity: .6; font-size: 12px; }
+  .ok { color: #1a7f37; font-weight: 600; } .bad { color: #b62324; font-weight: 600; }
+</style>
+<script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+</head>
+<body>
+
+<h1>จำลองหน้า <code>/shopee/imei</code></h1>
+<div class="sub">
+  ใช้ jQuery 3.3.1 · ช่อง <code>#txt_imei</code> · <code>#lblUser</code> และยิง
+  <code>$.post('/shopee/imei/get_order_new')</code> แบบเดียวกับหน้าจริง
+  เพื่อทดสอบว่า <b>D1</b> — hook เกาะกับการเรียก AJAX ได้จริงไหม
+</div>
+
+<section>
+  <h2>1 · สแกน</h2>
+  <div>ผู้ใช้: <b id="lblUser">tester</b></div>
+  <p>
+    <input type="text" id="txt_imei" onkeydown="validate(this, event)" placeholder="ยิงบาร์โค้ดหรือพิมพ์แล้วกด Enter" autofocus>
+  </p>
+  <div class="muted">ตัวอย่างที่ใช้ทดสอบได้:</div>
+  <p>
+    <button onclick="fill('356938035643809')">IMEI ปกติ</button>
+    <button onclick="fill('111111111111111')">ไม่พบออเดอร์</button>
+    <button onclick="fill('222222222222222')">ราคาต่ำกว่าทุน</button>
+    <button onclick="fill('333333333333333')">ออเดอร์ถูกยกเลิก</button>
+    <button onclick="fill('444444444444444')">IMEI ยังไม่ครบ</button>
+    <button onclick="fill('SPX123456789')">เลขพัสดุ (ปิดคลิป)</button>
+  </p>
+</section>
+
+<section>
+  <h2>2 · สัญญาณที่ hook ยิงออกไป</h2>
+  <table id="tbl"><thead>
+    <tr><th style="width:70px">เวลา</th><th style="width:80px">event</th><th>ข้อมูล</th></tr>
+  </thead><tbody></tbody></table>
+  <div class="muted" id="empty">— ยังไม่มีสัญญาณ —</div>
+</section>
+
+<script>
+  // ── ตั้งค่าเครื่องจำลอง (ของจริงมาจากหน้าตั้งค่า station_id ใน P1-3) ──
+  localStorage.setItem('packvideo.station_id', 'desk-dev');
+  localStorage.setItem('packvideo.token', 'dev-token');
+
+  // ── ดัก sendBeacon เพื่อแสดงสิ่งที่ hook ยิงออกไป (ยังยิงจริงด้วย) ──
+  var _beacon = navigator.sendBeacon.bind(navigator);
+  navigator.sendBeacon = function (url, body) {
+    try {
+      if (body instanceof URLSearchParams) {
+        var o = {};
+        body.forEach(function (v, k) { if (k !== 't') o[k] = v; });
+        show(o);
+      }
+    } catch (e) {}
+    return _beacon(url, body);
+  };
+
+  function show(o) {
+    document.getElementById('empty').style.display = 'none';
+    var tb = document.querySelector('#tbl tbody');
+    var tr = document.createElement('tr');
+    var t = new Date().toTimeString().slice(0, 8);
+    var rest = Object.keys(o).filter(function (k) {
+      return k !== 'event' && k !== 'station_id' && k !== 'v';
+    }).map(function (k) { return k + '=' + o[k]; }).join(' · ');
+    tr.innerHTML = '<td>' + t + '</td><td><b>' + (o.event || '') + '</b></td><td><code>' + rest + '</code></td>';
+    tb.insertBefore(tr, tb.firstChild);
+  }
+
+  function fill(v) {
+    var el = document.getElementById('txt_imei');
+    el.value = v; el.focus();
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+  }
+
+  // ── ต่อไปนี้คัดโครงมาจาก views/shopee/pickup/imei_new_api.ejs ──
+  function validate(obj, e) {
+    if (e.keyCode == 13) { get_airway(); }
+  }
+
+  function get_airway() {
+    var imei = $("#txt_imei").val();
+    if (!imei) return;
+    $.post("/shopee/imei/get_order_new", { imei: imei, user: $("#lblUser").html() })
+      .done(function (result) {
+        if (result.is_cancelled === true) { note('→ ไปหน้าใบปะหน้ายกเลิก'); }
+        else if (result.is_low_price === true) { note('→ alert ราคาต่ำกว่าทุน อยู่หน้าเดิม'); }
+        else if (!result.ordersn) { note('→ ไปหน้า not_found'); }
+        else if (result.imei_complete === false) { note('→ ไปหน้าผูก IMEI ที่เหลือ'); }
+        else { note('→ ไปหน้าพิมพ์ใบปะหน้า'); }
+        $("#txt_imei").val("").focus();
+      })
+      .fail(function () { note('→ API ล้มเหลว'); $("#txt_imei").val("").focus(); });
+  }
+
+  function note(msg) { show({ event: '(หน้าเดิม)', ผล: msg }); }
+</script>
+
+<!-- โหลดแบบเดียวกับที่จะใส่ในหน้าจริง -->
+<script async src="/hook.js"></script>
+
+</body>
+</html>
