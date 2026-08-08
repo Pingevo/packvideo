@@ -11,7 +11,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "set-mongo": "node scripts/set-mongo-url.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

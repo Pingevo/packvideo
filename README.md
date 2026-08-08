@@ -36,13 +36,18 @@
 
 ## เริ่มพัฒนา
 
-ต้องใช้ **Node 22** — เครื่องพัฒนามี node 12 ของ sellcenter อยู่ ระวังหยิบผิดตัว
+ขั้นตอนเต็มอยู่ที่ [docs/dev-setup.md](docs/dev-setup.md) — ย่อๆ คือ
 
 ```bash
-nvm use          # อ่านจาก .nvmrc
-npm install
-cp .env.example .env
-npm run dev      # http://127.0.0.1:1338
+nvm use && npm install && cp .env.example .env
+```
+
+```bash
+npm run set-mongo
+```
+
+```bash
+npm run dev
 ```
 
 ตรวจว่าทำงานถูก — ใช้ได้ทั้งเครื่องพัฒนาและเครื่องโต๊ะแพ็ค:
@@ -54,6 +59,10 @@ npm run smoke
 ```bash
 BASE=https://packvideo.digital.in.th npm run smoke
 ```
+
+> ต้องใช้ **Node 22** — เครื่องพัฒนามี Node 12 ของ sellcenter อยู่ ระวังหยิบผิดตัว
+> และ **อย่าแก้ `MONGO_URL` ในไฟล์เอง** ใช้ `npm run set-mongo` เพราะรหัสผ่านที่มีอักขระพิเศษ
+> ต้อง percent-encode ก่อน
 
 ## โครงสร้าง
 
