@@ -3,6 +3,7 @@ import { config, validateConfig, configWarnings } from './config.js';
 import { log } from './log.js';
 import { connect, close as closeDb } from './db.js';
 import { ensureStorage, storageStatus } from './lib/storage.js';
+import { startMonitor } from './lib/monitor.js';
 
 for (const warning of configWarnings()) log.warn(warning);
 
@@ -26,6 +27,8 @@ connect().catch((err) => log.error({ err: err.message }, 'เริ่มกา�
 const server = createApp().listen(config.port, () => {
   log.info({ port: config.port, env: config.env, node: process.version }, 'packvideo พร้อมรับงาน');
 });
+
+startMonitor();
 
 // การอัปโหลดชิ้นวิดีโอเป็น request สั้นๆ แต่ SSE เป็น request ยาว — ตั้งให้ยาวกว่าค่าปริยาย
 server.keepAliveTimeout = 65_000;

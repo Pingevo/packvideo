@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สถานะระบบ — packvideo</title>
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.3); }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; padding: 22px; line-height: 1.5; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  h1 { font-size: 19px; margin: 0; }
+  .when { font-size: 12px; opacity: .6; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .55;
+       margin: 0 0 10px; font-weight: 700; }
+  section { margin-bottom: 22px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+  .card .k { font-size: 11px; opacity: .6; }
+  .card .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .card .n { font-size: 11px; opacity: .6; margin-top: 2px; }
+  .card.bad  { border-color: rgba(182,35,36,.6);  background: rgba(182,35,36,.08); }
+  .card.warn { border-color: rgba(154,103,0,.6);  background: rgba(154,103,0,.08); }
+  .card.good { border-color: rgba(26,127,55,.5); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid rgba(128,128,128,.18); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .pill.on  { background: rgba(26,127,55,.18);  color: #1a7f37; }
+  .pill.off { background: rgba(128,128,128,.2); opacity: .8; }
+  .finding { border-left: 3px solid; padding: 9px 12px; margin-bottom: 7px; border-radius: 0 7px 7px 0;
+             font-size: 13px; }
+  .finding.error { border-color: #b62324; background: rgba(182,35,36,.09); }
+  .finding.warn  { border-color: #9a6700; background: rgba(154,103,0,.09); }
+  .empty { font-size: 13px; opacity: .55; padding: 10px 0; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>สถานะระบบ</h1>
+  <span class="when" id="when">กำลังโหลด…</span>
+</header>
+
+<section>
+  <h2>ต้องรู้ทันที</h2>
+  <div id="findings"><div class="empty">— ไม่มีปัญหา —</div></div>
+</section>
+
+<section>
+  <h2>ภาพรวมหนึ่งชั่วโมงล่าสุด</h2>
+  <div class="cards" id="cards"></div>
+</section>
+
+<section>
+  <h2>โต๊ะแพ็ค</h2>
+  <table>
+    <thead><tr>
+      <th>โต๊ะ</th><th>สถานะ</th><th>เครื่อง</th>
+      <th class="num">ใบปะหน้า</th><th class="num">คลิป</th><th class="num">อัตรา</th>
+      <th class="num">คิว</th><th>เห็นล่าสุด</th>
+    </tr></thead>
+    <tbody id="stations"></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>แจ้งเตือนที่ส่งไปแล้ว</h2>
+  <div id="alerts"><div class="empty">— ยังไม่มี —</div></div>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  function timeOf(s) { return s ? new Date(s).toLocaleTimeString('th-TH') : '—'; }
+
+  function card(k, v, n, cls) {
+    return '<div class="card ' + (cls || '') + '"><div class="k">' + esc(k) + '</div>' +
+      '<div class="v">' + esc(v) + '</div>' +
+      (n ? '<div class="n">' + esc(n) + '</div>' : '') + '</div>';
+  }
+
+  function render(d) {
+    $('when').textContent = 'อัปเดตเมื่อ ' + timeOf(d.checked_at);
+
+    // ── ปัญหา ──
+    var f = d.findings || [];
+    $('findings').innerHTML = f.length
+      ? f.map(function (x) {
+          return '<div class="finding ' + esc(x.level) + '">' + esc(x.text) + '</div>';
+        }).join('')
+      : '<div class="empty">— ไม่มีปัญหา —</div>';
+
+    // ── การ์ดสรุป ──
+    var r = d.rate || {};
+    var disk = d.disk || {};
+    var conn = (d.stations || []).filter(function (s) { return s.connected; }).length;
+    var totalSt = (d.stations || []).length;
+
+    var rateTxt = r.overall === null || r.overall === undefined
+      ? '—' : (r.overall * 100).toFixed(0) + '%';
+    var rateCls = r.overall === null || r.overall === undefined ? ''
+      : (r.overall < 0.95 ? 'bad' : 'good');
+
+    var diskCls = disk.disk_level === 'stop' ? 'bad'
+      : (disk.disk_level === 'squeeze' || disk.disk_level === 'warn') ? 'warn' : 'good';
+
+    $('cards').innerHTML =
+      card('คลิปต่อใบปะหน้า', rateTxt,
+           'ใบปะหน้า ' + (r.total_tag || 0) + ' · คลิป ' + (r.total_commit || 0), rateCls) +
+      card('โต๊ะที่ต่ออยู่', conn + '/' + totalSt, null, conn === 0 ? 'warn' : 'good') +
+      card('ดิสก์', (disk.used_pct != null ? disk.used_pct + '%' : '—'),
+           (disk.free_gb != null ? 'เหลือ ' + disk.free_gb + ' GB' : ''), diskCls) +
+      card('บันทึกได้ไหม', disk.recording_allowed ? 'ได้' : 'ไม่ได้', null,
+           disk.recording_allowed ? 'good' : 'bad') +
+      card('สัญญาณชั่วโมงล่าสุด',
+           Object.values((d.totals && d.totals.last_hour) || {}).reduce(function (a, b) { return a + b; }, 0),
+           Object.keys((d.totals && d.totals.last_hour) || {}).map(function (k) {
+             return k + ' ' + d.totals.last_hour[k]; }).join(' · '));
+
+    // ── ตารางโต๊ะ ──
+    var byStation = {};
+    ((r.by_station) || []).forEach(function (s) { byStation[s.station_id] = s; });
+
+    $('stations').innerHTML = (d.stations || []).map(function (s) {
+      var m = byStation[s.station_id] || {};
+      var rate = m.rate == null ? '—' : (m.rate * 100).toFixed(0) + '%';
+      // โต๊ะที่มีใบปะหน้าแต่ไม่มีเครื่องต่อ = กำลังแพ็คโดยไม่ได้อัด ต้องเห็นชัดที่สุด
+      var danger = !s.connected && (m.tag || 0) > 0;
+      return '<tr' + (danger ? ' style="background:rgba(182,35,36,.09)"' : '') + '>' +
+        '<td><code>' + esc(s.station_id) + '</code></td>' +
+        '<td><span class="pill ' + (s.connected ? 'on' : 'off') + '">' +
+          (s.connected ? 'ต่ออยู่' : (s.stale ? 'ขาดการติดต่อ' : 'ไม่ได้ตั้ง')) + '</span></td>' +
+        '<td>' + esc(s.device_name || '—') + '</td>' +
+        '<td class="num">' + (m.tag || 0) + '</td>' +
+        '<td class="num">' + (m.commit || 0) + '</td>' +
+        '<td class="num">' + rate + '</td>' +
+        '<td class="num">' + (s.queue_depth != null ? s.queue_depth : '—') + '</td>' +
+        '<td>' + timeOf(s.last_seen_at) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    // ── แจ้งเตือน ──
+    var a = d.alerts || [];
+    $('alerts').innerHTML = a.length
+      ? a.map(function (x) {
+          return '<div class="finding warn">' + timeOf(x.at) + ' · ' + esc(x.text) +
+            (x.delivered ? '' : ' <span style="opacity:.6">(ยังไม่ได้ส่งออก Telegram)</span>') + '</div>';
+        }).join('')
+      : '<div class="empty">— ยังไม่มี —</div>';
+  }
+
+  function load() {
+    fetch('/api/monitor')
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function (e) { $('when').textContent = 'โหลดไม่สำเร็จ: ' + e.message; });
+  }
+
+  load();
+  setInterval(load, 10000);
+})();
+</script>
+
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import express from 'express';
 import { config } from '../config.js';
+import { record } from '../lib/metrics.js';
 
 export const signalRouter = Router();
 
@@ -50,6 +51,7 @@ signalRouter.post('/signal', parseForm, (req, res) => {
     counters.byEvent[event] = (counters.byEvent[event] ?? 0) + 1;
     counters.byStation[stationId] = (counters.byStation[stationId] ?? 0) + 1;
     counters.lastAt = new Date().toISOString();
+    record(event, stationId);
 
     // correlate กับ log ฝั่ง sellcenter ด้วย ordersn ตั้งแต่วันแรก (NFR-5.1)
     req.log.info(
