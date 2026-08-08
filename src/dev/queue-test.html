@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ทดสอบคิวชิ้นวิดีโอ — packvideo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif; margin: 0; padding: 24px; line-height: 1.5; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: .7; font-size: 13px; margin-bottom: 18px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 7px; cursor: pointer; margin: 0 6px 6px 0;
+           border: 1px solid rgba(128,128,128,.5); background: transparent; color: inherit; }
+  pre { font-size: 12px; background: rgba(128,128,128,.1); padding: 12px; border-radius: 8px;
+        max-height: 420px; overflow: auto; margin: 12px 0 0; }
+  .ok { color: #1a7f37; font-weight: 600; } .bad { color: #b62324; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>ทดสอบคิวชิ้นวิดีโอ</h1>
+<div class="sub">
+  ตรวจ <b>NFR-1.4</b> — เน็ตขาด 10 นาทีต้องไม่ทำให้คลิปหาย ·
+  ทดสอบโดยไม่ต้องมีกล้อง ใช้การจำลองเน็ตล่มด้วยการดัก <code>fetch</code>
+</div>
+
+<p>
+  <button id="run">รันทดสอบทั้งชุด</button>
+  <button id="clear">ล้าง IndexedDB</button>
+</p>
+
+<pre id="out">กดปุ่มเพื่อเริ่ม</pre>
+
+<script src="/chunk-queue.js"></script>
+<script>
+(function () {
+  'use strict';
+  var out = document.getElementById('out');
+  var results = [];
+
+  function log(s) { out.textContent += s + '\n'; out.scrollTop = out.scrollHeight; }
+  function check(name, ok, detail) {
+    results.push({ name: name, ok: ok });
+    log((ok ? '✓ ' : '✗ ') + name + (detail ? '  — ' + detail : ''));
+  }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  // จำลองเน็ตล่ม: ดัก fetch เฉพาะการอัปชิ้นวิดีโอ
+  var realFetch = window.fetch.bind(window);
+  var offline = false;
+  window.fetch = function (url, opts) {
+    if (offline && String(url).indexOf('/chunk/') !== -1) {
+      return Promise.reject(new TypeError('Failed to fetch (จำลองเน็ตล่ม)'));
+    }
+    return realFetch(url, opts);
+  };
+
+  function signal(station, fields) {
+    var body = new URLSearchParams(Object.assign({ t: 'dev-token', station_id: station }, fields));
+    return realFetch('/signal', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body,
+    });
+  }
+
+  function clipsOf(station) {
+    return realFetch('/api/clips').then(function (r) { return r.json(); }).then(function (d) {
+      return (d.clips || []).filter(function (c) { return c.station_id === station; });
+    });
+  }
+
+  function blob(n, fill) {
+    return new Blob([new Uint8Array(n).fill(fill)], { type: 'application/octet-stream' });
+  }
+
+  document.getElementById('clear').onclick = function () {
+    indexedDB.deleteDatabase('packvideo');
+    log('ลบ IndexedDB แล้ว — รีเฟรชหน้านี้');
+  };
+
+  document.getElementById('run').onclick = async function () {
+    out.textContent = ''; results = []; offline = false;
+    var STATION = 'desk-queue-test';
+    var q = new ChunkQueue({ onlog: function (m) { log('   [คิว] ' + m); } });
+    await q.init();
+
+    // ── 1 · เน็ตปกติ ────────────────────────────────────────
+    log('1 · เน็ตปกติ');
+    var trace = 'q-' + Date.now();
+    await signal(STATION, { event: 'start', trace_id: trace, value: '356938035643809' });
+    await wait(200);
+    var clip = (await clipsOf(STATION)).find(function (c) { return c.status === 'pending'; });
+    check('สร้างคลิปได้', !!clip, clip && clip.clip_id);
+    var clipId = clip.clip_id;
+
+    await q.push(clipId, 0, blob(1000, 1));
+    await q.push(clipId, 1, blob(1000, 2));
+    await wait(700);
+    check('เน็ตปกติ → คิวว่าง', (await q.count()) === 0, 'เหลือ ' + (await q.count()));
+
+    // ── 2 · เน็ตล่ม ─────────────────────────────────────────
+    log('\n2 · จำลองเน็ตล่ม');
+    offline = true;
+    for (var i = 2; i < 8; i++) await q.push(clipId, i, blob(1000, i));
+    await wait(600);
+    var stuck = await q.count();
+    check('เน็ตล่ม → ชิ้นค้างอยู่ในเครื่องครบ', stuck === 6, 'ค้าง ' + stuck + ' ชิ้น');
+
+    // ── 3 · เปิดคิวใหม่เหมือนหน้าถูกปิดแล้วเปิดใหม่ ─────────
+    log('\n3 · จำลองหน้าถูกปิดแล้วเปิดใหม่');
+    q.stop();
+    var q2 = new ChunkQueue({ onlog: function (m) { log('   [คิว2] ' + m); } });
+    var found = await q2.init();
+    check('เปิดใหม่แล้วยังเห็นชิ้นค้างจากรอบก่อน', found === 6, 'พบ ' + found + ' ชิ้น');
+
+    // ── 4 · เน็ตกลับมา ──────────────────────────────────────
+    log('\n4 · เน็ตกลับมา');
+    offline = false;
+    q2.resume();
+    for (var t = 0; t < 40 && (await q2.count()) > 0; t++) await wait(250);
+    check('เน็ตกลับมา → ส่งครบ คิวว่าง', (await q2.count()) === 0, 'เหลือ ' + (await q2.count()));
+
+    await signal(STATION, { event: 'commit', trace_id: trace, ordersn: '250808QUEUE1' });
+    await wait(150);
+    await signal(STATION, { event: 'tag', tracking_no: 'SPXQUEUE001' });
+    await wait(150);
+    await signal(STATION, { event: 'scan', value: 'SPXQUEUE001' });
+    await wait(600);
+
+    var done = (await clipsOf(STATION)).find(function (c) { return c.clip_id === clipId; });
+    check('คลิปปิดเป็น verified', done && done.status === 'verified', done && done.status);
+    check('ได้ครบ 8,000 ไบต์ ไม่มีชิ้นหาย', done && done.bytes === 8000, done && done.bytes + ' ไบต์');
+
+    // ── 5 · คลิปที่ปิดแล้วต้องไม่รับชิ้นเพิ่ม ────────────────
+    log('\n5 · ส่งชิ้นเข้าคลิปที่ปิดไปแล้ว');
+    await q2.push(clipId, 99, blob(500, 9));
+    for (var u = 0; u < 20 && (await q2.count()) > 0; u++) await wait(250);
+    check('เซิร์ฟเวอร์ปฏิเสธและคิวทิ้งให้ ไม่วนส่งซ้ำ', (await q2.count()) === 0, 'เหลือ ' + (await q2.count()));
+
+    var after = (await clipsOf(STATION)).find(function (c) { return c.clip_id === clipId; });
+    check('ขนาดไฟล์ไม่เปลี่ยน checksum จึงยังเชื่อได้', after && after.bytes === 8000, after && after.bytes + ' ไบต์');
+
+    // ── 6 · คลิปที่ถูกทิ้ง ──────────────────────────────────
+    log('\n6 · คลิปที่ถูกทิ้งระหว่างเน็ตล่ม');
+    var trace2 = 'q2-' + Date.now();
+    await signal(STATION, { event: 'start', trace_id: trace2, value: '111111111111111' });
+    await wait(200);
+    var c2 = (await clipsOf(STATION)).find(function (c) { return c.status === 'pending'; });
+    offline = true;
+    for (var k = 0; k < 4; k++) await q2.push(c2.clip_id, k, blob(400, 5));
+    await wait(400);
+    await signal(STATION, { event: 'abort', trace_id: trace2, reason: 'not_found' });
+    await wait(300);
+    offline = false;
+    q2.resume();
+    for (var v = 0; v < 30 && (await q2.count()) > 0; v++) await wait(250);
+    check('ชิ้นของคลิปที่ถูกทิ้งถูกล้างออกจากคิว', (await q2.count()) === 0, 'เหลือ ' + (await q2.count()));
+
+    var bad = results.filter(function (r) { return !r.ok; });
+    log('\n' + (results.length - bad.length) + '/' + results.length + ' ผ่าน');
+    log(bad.length ? '✗ ไม่ผ่าน: ' + bad.map(function (b) { return b.name; }).join(', ') : '✓ ผ่านทั้งหมด');
+    window.__QUEUE_TEST = { total: results.length, passed: results.length - bad.length,
+                            failed: bad.map(function (b) { return b.name; }) };
+  };
+})();
+</script>
+
+</body>
+</html>

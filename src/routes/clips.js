@@ -52,7 +52,9 @@ clipsRouter.put(
     if (!req.body?.length) return res.status(400).json({ ok: false, error: 'ไม่มีข้อมูล' });
 
     const result = await clips.putChunk(req.params.clipId, seq, req.body);
-    res.status(result.ok ? 200 : 404).json(result);
+    // 409 = ทิ้งชิ้นนี้ได้เลย · 503 = ปัญหาชั่วคราว ให้ส่งใหม่
+    const status = result.ok ? 200 : result.final ? 409 : 503;
+    res.status(status).json(result);
   },
 );
 

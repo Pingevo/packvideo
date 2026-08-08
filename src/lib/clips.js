@@ -232,16 +232,30 @@ export async function close(clipId, status, note) {
  * ทำแบบนี้แทนการต่อท้ายไฟล์เดียว เพราะชิ้นที่มาซ้ำหรือมาสลับลำดับ (เกิดได้ตอน
  * เน็ตสะดุดแล้วฝั่งเครื่องส่งใหม่) จะไม่ทำให้ไฟล์เสีย — เขียนทับชิ้นเดิมเฉยๆ
  */
+const CLOSED = ['aborted', 'verified', 'manual_stop', 'unverified', 'timeout'];
+
 export async function putChunk(clipId, seq, buffer) {
   const clip = clips.get(clipId);
-  if (!clip) return { ok: false, error: 'ไม่พบคลิปนี้' };
-  if (['aborted'].includes(clip.status)) return { ok: false, error: 'คลิปนี้ถูกทิ้งไปแล้ว' };
+  if (!clip) return { ok: false, final: true, error: 'ไม่พบคลิปนี้' };
 
-  const file = path.join(TMP(), clipId, String(seq).padStart(6, '0'));
-  await fs.writeFile(file, buffer);
-  clip.chunks = Math.max(clip.chunks, seq + 1);
-  touch(clip);
-  return { ok: true, seq };
+  // คลิปที่ปิดไปแล้วรับชิ้นเพิ่มไม่ได้ — ไฟล์ถูกต่อและคำนวณ checksum ไปแล้ว
+  // ถ้ารับเพิ่มจะได้ไฟล์ที่ไม่ตรงกับ checksum ที่ประกาศไว้ ซึ่งทำลายค่าของมันในฐานะหลักฐาน
+  // ตอบ final เพื่อให้ฝั่งเครื่องรู้ว่าให้ทิ้งชิ้นนี้ ไม่ใช่วนส่งใหม่ไปเรื่อยๆ
+  if (CLOSED.includes(clip.status)) {
+    return { ok: false, final: true, error: `คลิปนี้ปิดไปแล้ว (${clip.status})` };
+  }
+
+  try {
+    const file = path.join(TMP(), clipId, String(seq).padStart(6, '0'));
+    await fs.writeFile(file, buffer);
+    clip.chunks = Math.max(clip.chunks, seq + 1);
+    touch(clip);
+    return { ok: true, seq };
+  } catch (err) {
+    // เขียนไม่ได้ = ปัญหาชั่วคราว (ดิสก์/สิทธิ์) ให้ฝั่งเครื่องลองใหม่ ไม่ใช่ทิ้ง
+    log.error({ clip_id: clipId, seq, err: err.message }, 'เขียนชิ้นวิดีโอไม่สำเร็จ');
+    return { ok: false, final: false, error: err.message };
+  }
 }
 
 /** ต่อชิ้นทั้งหมดเป็นไฟล์เดียว คำนวณ checksum แล้วเขียน metadata คู่ไว้ */

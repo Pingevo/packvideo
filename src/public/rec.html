@@ -76,6 +76,7 @@
   <span id="conn">ยังไม่เชื่อมต่อ</span>
 </div>
 
+<script src="/chunk-queue.js"></script>
 <script>
 (function () {
   'use strict';
@@ -94,7 +95,7 @@
   var S = {
     clipId: null, ordersn: null, tracking: null,
     recorder: null, stream: null, seq: 0, startedAt: 0,
-    queue: [], sending: false, allowed: true,
+    queueDepth: 0, allowed: true,
     timeslice: 1000, videoBps: 1000000,
   };
 
@@ -142,9 +143,9 @@
 
     S.recorder.ondataavailable = function (e) {
       if (!e.data || !e.data.size || !S.clipId) return;
-      S.queue.push({ clipId: S.clipId, seq: S.seq++, blob: e.data });
-      pump();
-      updateQueue();
+      queue.push(S.clipId, S.seq++, e.data).catch(function (err) {
+        warn('เก็บชิ้นวิดีโอลงเครื่องไม่ได้: ' + err.message);
+      });
     };
     S.recorder.start(S.timeslice);
     setRec(true);
@@ -169,31 +170,17 @@
     $('stop').disabled = !on;
   }
 
-  // ── ส่งชิ้นวิดีโอ ───────────────────────────────────────────
-  // ส่งทีละชิ้นตามลำดับ ล้มเหลวก็วนกลับมาลองใหม่ ไม่ทิ้ง
-  function pump() {
-    if (S.sending || !S.queue.length) return;
-    S.sending = true;
-    var item = S.queue[0];
-    fetch('/api/clip/' + encodeURIComponent(item.clipId) + '/chunk/' + item.seq, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: item.blob,
-    })
-      .then(function (r) {
-        if (r.ok || r.status === 404) S.queue.shift();   // 404 = คลิปถูกทิ้งไปแล้ว ไม่ต้องวนซ้ำ
-        S.sending = false; updateQueue(); pump();
-      })
-      .catch(function () {
-        S.sending = false; updateQueue();
-        setTimeout(pump, 2000);   // เน็ตสะดุด — คิวรออยู่ ไม่หาย
-      });
-  }
-
-  function updateQueue() {
-    setText('queue', 'คิว ' + S.queue.length);
-    if (S.queue.length > 20) warn('คิวอัปโหลดค้าง ' + S.queue.length + ' ชิ้น');
-  }
+  // ── คิวชิ้นวิดีโอ ───────────────────────────────────────────
+  // เก็บลง IndexedDB ทันที แล้วค่อยทยอยส่ง — เน็ตขาดหรือหน้าถูกปิดก็ไม่หาย (NFR-1.4)
+  var queue = new ChunkQueue({
+    onchange: function (n) {
+      S.queueDepth = n;
+      setText('queue', 'คิว ' + n);
+      if (n > 20) warn('คิวอัปโหลดค้าง ' + n + ' ชิ้น');
+      else if (n === 0) clearWarn();
+    },
+    onlog: function (m) { try { console.info('[คิว]', m); } catch (e) {} },
+  });
 
   // ── ปิดคลิปเอง ──────────────────────────────────────────────
   // ต้องกดค้าง 1 วินาที กันกดโดนตอนหยิบของ (FR-1.10)
@@ -243,7 +230,12 @@
       S.ordersn = d.ordersn; setText('ordersn', d.ordersn || '—');
     });
 
-    es.addEventListener('abort', function () { finishClip(); });
+    es.addEventListener('abort', function (e) {
+      var id = S.clipId;
+      finishClip();
+      // ชิ้นที่ส่งไม่ทันของคลิปที่ถูกทิ้ง ไม่ต้องเสียแบนด์วิดท์ส่งต่อ
+      if (id) queue.dropClip(id).catch(function () {});
+    });
 
     es.addEventListener('tag', function (e) {
       var d = JSON.parse(e.data);
@@ -305,7 +297,7 @@
 
   // ── กันหน้าปิดโดยไม่ตั้งใจ ──────────────────────────────────
   window.addEventListener('beforeunload', function (e) {
-    if (S.clipId || S.queue.length) { e.preventDefault(); e.returnValue = ''; }
+    if (S.clipId || S.queueDepth) { e.preventDefault(); e.returnValue = ''; }
     navigator.sendBeacon('/api/station/' + encodeURIComponent(station) + '/detach', new Blob([], {}));
   });
 
@@ -317,8 +309,13 @@
     });
   }
 
+  // เน็ตกลับมาแล้วส่งต่อทันที ไม่ต้องรอจังหวะถอยของ backoff
+  window.addEventListener('online', function () { queue.resume(); });
+
   setText('station', station);
-  startCamera()
+  queue.init()
+    .catch(function (e) { warn('เปิดคิวในเครื่องไม่ได้: ' + e.message); })
+    .then(startCamera)
     .then(connect)
     .catch(function (e) { warn('เปิดกล้องไม่ได้: ' + e.message); connect(); });
 })();
