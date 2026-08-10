@@ -18,7 +18,9 @@
     "preset-mongo": "node scripts/check-node.cjs",
     "set-mongo": "node scripts/set-mongo-url.mjs",
     "pree2e": "node scripts/check-node.cjs",
-    "e2e": "node scripts/e2e-clip.mjs"
+    "e2e": "node scripts/e2e-clip.mjs",
+    "presetup-mongo": "node scripts/check-node.cjs",
+    "setup-mongo": "node scripts/setup-mongo-user.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",
