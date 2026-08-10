@@ -3,6 +3,7 @@ import { commitRate, msSinceLastSignal } from './metrics.js';
 import { storageStatus } from './storage.js';
 import { dbState } from '../db.js';
 import { alert } from './notify.js';
+import { broadcast } from './sse.js';
 import { log } from '../log.js';
 import { config } from '../config.js';
 
@@ -14,13 +15,14 @@ import { config } from '../config.js';
  * ก็ไม่มีใครรู้ ตัวเลขพวกนี้คือสิ่งเดียวที่ทำให้เห็น
  */
 
-const CHECK_INTERVAL_MS = 60_000;
+const CHECK_INTERVAL_MS = 15_000;
 const MIN_COMMIT_RATE = 0.95;
 const MIN_TAG_SAMPLE = 20;          // ต่ำกว่านี้อัตราแกว่งเกินกว่าจะเชื่อ
 const SILENCE_MS = 15 * 60 * 1000;
 const QUEUE_ALERT = 20;
 
 let timer = null;
+let lastDiskLevel = null;
 
 export async function runChecks() {
   const findings = [];
@@ -80,6 +82,20 @@ export async function runChecks() {
 
   // ── 5 · ดิสก์ ───────────────────────────────────────────────
   const disk = await storageStatus();
+
+  // ระดับดิสก์เปลี่ยน → บอกทุกหน้าต่างอัดทันที
+  // ถ้าส่ง config แค่ตอนต่อ SSE ครั้งแรก หน้าต่างที่เปิดค้างมาตั้งแต่เช้าจะยังอัดต่อ
+  // ทั้งที่ดิสก์เต็มไปแล้ว — คือกรณีที่กฎข้อนี้มีไว้ป้องกันพอดี
+  if (disk.disk_level !== lastDiskLevel) {
+    log.warn({ from: lastDiskLevel, to: disk.disk_level, used_pct: disk.used_pct }, 'ระดับดิสก์เปลี่ยน');
+    lastDiskLevel = disk.disk_level;
+    broadcast('config', {
+      recording: disk.recording_allowed,
+      disk_level: disk.disk_level,
+      disk_used_pct: disk.used_pct,
+    });
+  }
+
   if (disk.disk_level === 'stop') {
     findings.push({
       level: 'error',

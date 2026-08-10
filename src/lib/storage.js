@@ -14,6 +14,21 @@ export function diskLevel(usedPct) {
   return 'normal';
 }
 
+/**
+ * บังคับค่าการใช้ดิสก์เพื่อทดสอบ — ใช้ได้เฉพาะนอก production
+ *
+ * ทางเดียวที่จะทดสอบพฤติกรรมตอนดิสก์เต็มคือทำให้ดิสก์เต็มจริง ซึ่งบนเครื่องพัฒนา
+ * แปลว่าต้องเขียนไฟล์หลายร้อย GB · กฎข้อนี้สำคัญเกินกว่าจะปล่อยไม่ทดสอบ
+ * เพราะถ้าผิดพลาดคือ "หยุดงานแพ็คทั้งคลัง" ไม่ใช่แค่ไม่ได้อัด
+ */
+let simulatedPct = null;
+
+export function setSimulatedUsage(pct) {
+  if (config.env === 'production') return false;
+  simulatedPct = pct === null ? null : Number(pct);
+  return true;
+}
+
 /** สร้างโฟลเดอร์ที่เก็บถ้ายังไม่มี แล้วคืน path สัมบูรณ์ */
 export async function ensureStorage() {
   const root = path.resolve(config.storage.path);
@@ -71,6 +86,12 @@ export async function storageStatus() {
     out.total_gb = +(total / 1024 ** 3).toFixed(1);
     out.free_gb = +(free / 1024 ** 3).toFixed(1);
     out.used_pct = total > 0 ? +((usable / total) * 100).toFixed(1) : null;
+
+    if (simulatedPct !== null) {
+      out.used_pct = simulatedPct;
+      out.simulated = true;
+    }
+
     out.disk_level = out.used_pct == null ? null : diskLevel(out.used_pct);
     out.recording_allowed = out.writable && out.disk_level !== 'stop';
   } catch (err) {

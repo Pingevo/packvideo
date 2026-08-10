@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import express from 'express';
+import { setSimulatedUsage } from '../lib/storage.js';
+import { runChecks } from '../lib/monitor.js';
 
 /**
  * จำลอง API ของ sellcenter ไว้ทดสอบ hook.js เท่านั้น — ไม่ถูกเสิร์ฟบน production
@@ -10,6 +12,18 @@ import express from 'express';
  * ต้องทำสองจังหวะ ไม่ใช่จังหวะเดียว
  */
 export const devRouter = Router();
+
+/**
+ * POST /dev/disk/:pct — บังคับค่าการใช้ดิสก์เพื่อทดสอบ (ส่ง `auto` เพื่อกลับไปอ่านค่าจริง)
+ * มีเฉพาะนอก production
+ */
+devRouter.post('/dev/disk/:pct', async (req, res) => {
+  const raw = req.params.pct;
+  setSimulatedUsage(raw === 'auto' ? null : Number(raw));
+  // ตรวจทันทีเพื่อให้ config ถูกกระจายออกไปโดยไม่ต้องรอรอบถัดไป
+  await runChecks();
+  res.json({ ok: true, simulated: raw === 'auto' ? null : Number(raw) });
+});
 
 const CASES = {
   111111111111111: { ordersn: null },
