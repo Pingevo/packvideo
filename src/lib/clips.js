@@ -6,14 +6,16 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { emit } from './sse.js';
+import * as repo from './repo.js';
 
 /**
  * วงจรชีวิตของคลิป — ดู design §3
  *
- * สถานะเก็บในหน่วยความจำก่อน (ย้ายลง collection `clips` ใน P1-5)
- * แต่ **ไฟล์ .json ข้างคลิปถูกเขียนจริงตั้งแต่ตอนนี้** เพราะตามหลัก D4
- * ฐานข้อมูลคือ index ส่วนไฟล์คือความจริง — ถ้าฐานข้อมูลหาย คลิปยังบอกตัวเองได้
- * ว่าเป็นของออเดอร์ไหน
+ * สถานะของคลิปที่กำลังอัดอยู่ในหน่วยความจำเพื่อความเร็ว และถูกเขียนลงฐานข้อมูล
+ * ทุกครั้งที่เปลี่ยนสถานะ พร้อมต่อท้าย clip_events ที่ลบไม่ได้ (FR-7.6)
+ *
+ * ตามหลัก D4 ฐานข้อมูลคือ index ส่วนไฟล์คือความจริง — ไฟล์ .json ข้างคลิป
+ * ทำให้คลิปบอกตัวเองได้ว่าเป็นของออเดอร์ไหนแม้ฐานข้อมูลหายทั้งก้อน
  */
 
 const ROOT = () => path.resolve(config.storage.path);
@@ -88,6 +90,7 @@ export async function start({ traceId, stationId, imei, user }) {
   openByStation.set(stationId, clip._id);
 
   await fs.mkdir(path.join(TMP(), clip._id), { recursive: true });
+  persist(clip, 'start', { imei });
   emit(stationId, 'start', { clip_id: clip._id, trace_id: traceId });
   log.info({ clip_id: clip._id, station_id: stationId }, 'เริ่มคลิป');
   return clip;
@@ -104,6 +107,7 @@ export function commit({ traceId, ordersn, flag, imeiComplete }) {
   if (flag && !clip.flags.includes(flag)) clip.flags.push(flag);
   touch(clip);
 
+  persist(clip, 'commit', { flag });
   emit(clip.station_id, 'commit', { clip_id: clip._id, ordersn: clip.ordersn, flag });
   log.info({ clip_id: clip._id, ordersn: clip.ordersn }, 'ยืนยันคลิป');
   return clip;
@@ -117,6 +121,7 @@ export async function abort({ traceId, reason }) {
   clip.ended_at = new Date();
   forget(clip);
 
+  persist(clip, 'abort', { reason });
   emit(clip.station_id, 'abort', { clip_id: clip._id, reason });
   // ทิ้งไฟล์จริง ไม่ปล่อยค้างเป็นขยะ (FR-2.6) — ที่ 1,500 ออเดอร์/วันจะสะสมเป็นพื้นที่จริง
   await removeTmp(clip._id);
@@ -134,6 +139,7 @@ export function tag({ stationId, trackingNo, user }) {
   if (!trackingNo && !clip.flags.includes('no_tracking')) clip.flags.push('no_tracking');
   touch(clip);
 
+  persist(clip, 'tag');
   emit(stationId, 'tag', { clip_id: clip._id, tracking_no: clip.tracking_no });
   return clip;
 }
@@ -161,6 +167,7 @@ export async function scan({ stationId, value }) {
   if (expected) {
     if (!clip.flags.includes('mismatch')) clip.flags.push('mismatch');
     touch(clip);
+    persist(clip, 'mismatch', { expected: clip.tracking_no, scanned: value });
     emit(stationId, 'mismatch', {
       clip_id: clip._id,
       expected: clip.tracking_no,
@@ -212,6 +219,7 @@ export async function close(clipId, status, note) {
     clip.flags.push('finalise_failed');
   }
 
+  persist(clip, 'close', { status, note: note ?? null });
   emit(clip.station_id, 'stop', {
     clip_id: clip._id,
     status,
@@ -353,6 +361,27 @@ export function stopSweeper() {
 export async function closeStation(stationId, reason) {
   const clip = openClipOf(stationId);
   if (clip) await close(clip._id, 'unverified', reason);
+}
+
+// ── บันทึกลงฐานข้อมูล ─────────────────────────────────────────
+/**
+ * เขียนสถานะล่าสุดของคลิปและต่อท้าย clip_events
+ *
+ * ไม่ await ในเส้นทางหลัก — ฐานข้อมูลช้าหรือล่มต้องไม่หน่วงการอัด
+ * ไฟล์กับ JSON คู่ยังถูกเขียนตามปกติอยู่แล้ว ฐานข้อมูลเป็นแค่ index (D4)
+ */
+function persist(clip, event, detail) {
+  const meta = toMetadata(clip);
+  void repo.saveClip(meta);
+  void repo.appendEvent({
+    clip_id: clip._id,
+    event,
+    station_id: clip.station_id,
+    ordersn: clip.ordersn ?? null,
+    tracking_no: clip.tracking_no ?? null,
+    actor: clip.packer ?? null,
+    detail: detail ?? null,
+  });
 }
 
 // ── ตัวช่วย ───────────────────────────────────────────────────

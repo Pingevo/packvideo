@@ -7,6 +7,7 @@ let db = null;
 let state = { connected: false, lastError: null, since: null };
 let retryTimer = null;
 let stopped = false;
+let onReady = null;
 
 /**
  * ต่อ MongoDB แบบพยายามใหม่เรื่อยๆ อยู่เบื้องหลัง — **ไม่ล้ม process ถ้าต่อไม่ได้**
@@ -15,8 +16,9 @@ let stopped = false;
  * ซึ่งเป็นตอนที่ต้องการมันที่สุด · design §12 กำหนดว่า Mongo ล่ม = หยุดอัด
  * แต่ตัวบริการต้องยังอยู่เพื่อรายงานว่าเกิดอะไรขึ้น
  */
-export async function connect() {
+export async function connect(readyHandler) {
   stopped = false;
+  onReady = readyHandler ?? null;
   client = new MongoClient(config.mongo.url, {
     serverSelectionTimeoutMS: 3000,
     connectTimeoutMS: 3000,
@@ -41,6 +43,12 @@ async function attempt() {
     db = client.db(config.mongo.dbName);
     state = { connected: true, lastError: null, since: new Date() };
     log.info({ db: config.mongo.dbName }, 'mongo เชื่อมต่อแล้ว');
+    // เตรียม index และเก็บกวาดคลิปค้างทุกครั้งที่ต่อติด รวมถึงตอนต่อกลับมาได้หลังหลุด
+    if (onReady) {
+      try { await onReady(); } catch (err) {
+        log.error({ err: err.message }, 'งานเตรียมฐานข้อมูลหลังเชื่อมต่อไม่สำเร็จ');
+      }
+    }
   } catch (err) {
     state = { connected: false, lastError: err.message, since: new Date() };
     log.error({ err: err.message }, 'mongo เชื่อมต่อไม่ได้ — จะลองใหม่ใน 5 วินาที');

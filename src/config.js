@@ -34,7 +34,7 @@ export const config = {
   mongo: {
     url: str('MONGO_URL', 'mongodb://127.0.0.1:27017'),
     // คนละ database กับ sellcenter (`wallet`) ตามหลัก "แยกภาระ" ใน design §2
-    dbName: str('MONGO_DB', 'packvideo'),
+    dbName: str('MONGO_DB', 'packVideo'),
   },
 
   storage: {
