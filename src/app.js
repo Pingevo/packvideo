@@ -47,7 +47,18 @@ export function createApp() {
 
   // hook.js ถูกโหลดทุกครั้งที่พนักงานเปิดหน้าแพ็ค — ต้องเบาและแคชได้
   // ไม่ต้องมี CORS เพราะ <script src> ไม่ได้อยู่ใต้กฎ CORS
-  app.use(express.static(PUBLIC_DIR, { maxAge: '5m' }));
+  //
+  // บนเครื่องพัฒนาไม่แคชเลย ไม่งั้นแก้ hook.js แล้วทดสอบได้ผลเก่าจนสับสน
+  // (เจอมาแล้ว — เสียเวลาไล่หาสาเหตุที่ไม่มีอยู่จริง)
+  // ระหว่าง pilot ที่ต้องปรับจูน hook บ่อย ให้รู้ด้วยว่าการแก้ใช้เวลาถึง 5 นาที
+  // กว่าจะถึงทุกโต๊ะ เพราะแคชฝั่งเบราว์เซอร์
+  app.use(express.static(PUBLIC_DIR, {
+    maxAge: config.env === 'production' ? '5m' : 0,
+    setHeaders: (res) => {
+      // max-age=0 ยังเข้าแคชอยู่ดี ต้อง no-store ถึงจะไม่เก็บเลย
+      if (config.env !== 'production') res.setHeader('Cache-Control', 'no-store');
+    },
+  }));
 
   // หน้าจำลองหน้าแพ็คของ sellcenter ไว้ทดสอบ hook — ไม่เสิร์ฟบน production
   if (config.env !== 'production') {

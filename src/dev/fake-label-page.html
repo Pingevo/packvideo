@@ -30,7 +30,7 @@
     และสร้าง <code>&lt;svg id="svg_{tracking_no}"&gt;</code> ไว้ให้ JsBarcode วาด
   </div>
   <p>ผู้ใช้: <b id="lblUser">tester</b></p>
-  <p>ช่องรับสแกนปิดกล่องของหน้าจริง: <input type="text" id="txt_close" style="font:inherit;padding:6px 10px"></p>
+  <p>ช่องรับสแกนปิดกล่องของหน้าจริง: <input type="text" id="txt_close" onkeyup="close_bill()" style="font:inherit;padding:6px 10px"></p>
 </section>
 
 <section>
@@ -71,6 +71,10 @@
 <script async src="/hook.js"></script>
 
 <script>
+  // หน้าจริงผูก onkeyup="close_bill()" ที่ช่องนี้ — กดปุ่มอะไรก็เด้งกลับทันที
+  // ไม่ใช่แค่ Enter ช่องนี้จึงใช้รับการสแกนปิดคลิปไม่ได้ ต้องไปสแกนที่ #txt_imei
+  // หลัง redirect กลับหน้า /shopee/imei แทน
+  function close_bill() { console.log('หน้าจริงจะ redirect กลับ /shopee/imei ตรงนี้'); }
   document.getElementById('txt_close').focus();
 </script>
 

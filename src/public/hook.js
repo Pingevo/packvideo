@@ -39,7 +39,13 @@
       if (!BASE || !station || !token) return;
 
       // กันยิงซ้ำจากชั้นหลักกับชั้นสำรองที่ทำงานพร้อมกัน
-      var key = event + '|' + (fields.trace_id || '') + '|' + (fields.value || '');
+      //
+      // `scan` ต้องกันซ้ำด้วยค่าที่สแกนอย่างเดียว ห้ามรวม trace_id เข้าไป
+      // เพราะเราดักทั้ง keydown และ keyup ซึ่งสร้าง trace_id คนละตัว
+      // ถ้ารวมเข้าไปจะได้สัญญาณซ้ำสองครั้งต่อการสแกนหนึ่งครั้ง
+      var key = event === 'scan'
+        ? 'scan|' + (fields.value || '')
+        : event + '|' + (fields.trace_id || '') + '|' + (fields.value || '');
       var now = Date.now();
       if (recent[key] && now - recent[key] < DEDUPE_MS) return;
       recent[key] = now;
@@ -157,34 +163,44 @@
 
   // ── ชั้นสำรอง: ดักการกด Enter ที่ช่องสแกน ───────────────────
   // ทำงานพร้อมชั้นหลัก กันซ้ำด้วย dedupe — ถ้าวันหนึ่งหน้าเดิมเลิกใช้ jQuery ยังมีตัวนี้เหลือ
+  //
+  // **ต้องดักที่ keyup ไม่ใช่แค่ keydown** — หน้าจริงผูก validate() ไว้กับ
+  // onkeyup="validate(this, event)" ที่ #txt_imei การเรียก preventDefault ตอน keydown
+  // ไม่หยุด keyup ที่ตามมา การดักเลขพัสดุจึงจะไม่ทำงานเลยถ้าดักผิดจังหวะ
+  //
+  // ตัวรับแบบ capture ที่ document ทำงานก่อน handler ที่ตัว element เสมอ
+  // stopImmediatePropagation จึงหยุด onkeyup ของหน้าเดิมได้จริง
   function bindKey() {
-    document.addEventListener('keydown', function (ev) {
-      try {
-        if (ev.keyCode !== 13 && ev.key !== 'Enter') return;
-        var el = ev.target;
-        if (!el || el.tagName !== 'INPUT') return;
-        if (el.id !== 'txt_imei' && el.id !== 'txt_close') return;
+    ['keydown', 'keyup'].forEach(function (type) {
+      document.addEventListener(type, function (ev) {
+        try {
+          if (ev.keyCode !== 13 && ev.key !== 'Enter') return;
+          var el = ev.target;
+          if (!el || el.tagName !== 'INPUT' || el.id !== 'txt_imei') return;
 
-        var value = (el.value || '').trim();
-        if (!value) return;
+          var value = (el.value || '').trim();
+          if (!value) return;
 
-        if (isTrackingLike(value)) {
-          // ค่านี้ไม่ใช่ IMEI — ถ้าปล่อยให้หน้าเดิมยิง API จะเด้งไปหน้า not_found ทุกออเดอร์
-          // ดูหมายเหตุเรื่องนี้ใน docs/design.md §4.2
-          if (INTERCEPT_TRACKING) {
-            ev.preventDefault();
-            ev.stopImmediatePropagation();
-            el.value = '';
+          if (isTrackingLike(value)) {
+            // ค่านี้ไม่ใช่ IMEI — ถ้าปล่อยให้หน้าเดิมยิง API จะเด้งไปหน้า not_found ทุกออเดอร์
+            // ดูหมายเหตุเรื่องนี้ใน docs/design.md §4.2.1
+            if (INTERCEPT_TRACKING) {
+              ev.preventDefault();
+              ev.stopImmediatePropagation();
+              // เคลียร์ช่องตอน keyup เท่านั้น ถ้าเคลียร์ตอน keydown ค่าจะหายไป
+              // ก่อนที่ keyup จะได้อ่าน แล้วเราจะดักตัวที่สองไม่ทัน
+              if (type === 'keyup') el.value = '';
+            }
+            beacon('scan', { value: value, trace_id: uuid() });
+            return;
           }
-          beacon('scan', { value: value, trace_id: uuid() });
-          return;
-        }
 
-        // ปล่อยให้หน้าเดิมทำงานตามปกติ ชั้นหลักจะจับตอนมันยิง AJAX
-        // ยิง start จากที่นี่ด้วยเผื่อ jQuery ไม่อยู่ — dedupe จะตัดตัวซ้ำทิ้งเอง
-        if (!hasJquery) onScan(value, userName());
-      } catch (err) { swallow(err); }
-    }, true);   // capture — ต้องได้ก่อน handler ของหน้าเดิม
+          // ปล่อยให้หน้าเดิมทำงานตามปกติ ชั้นหลักจะจับตอนมันยิง AJAX
+          // ยิง start จากที่นี่ด้วยเผื่อ jQuery ไม่อยู่ — dedupe จะตัดตัวซ้ำทิ้งเอง
+          if (!hasJquery && type === 'keyup') onScan(value, userName());
+        } catch (err) { swallow(err); }
+      }, true);   // capture — ต้องได้ก่อน handler ของหน้าเดิม
+    });
   }
 
   // เลขพัสดุมีตัวอักษรนำ (SPX… TH…) ส่วน IMEI เป็นตัวเลขล้วน 15 หลัก

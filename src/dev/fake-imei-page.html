@@ -35,7 +35,7 @@
   <h2>1 · สแกน</h2>
   <div>ผู้ใช้: <b id="lblUser">tester</b></div>
   <p>
-    <input type="text" id="txt_imei" onkeydown="validate(this, event)" placeholder="ยิงบาร์โค้ดหรือพิมพ์แล้วกด Enter" autofocus>
+    <input type="text" id="txt_imei" onkeyup="validate(this, event)" placeholder="ยิงบาร์โค้ดหรือพิมพ์แล้วกด Enter (หน้าจริงผูก onkeyup)" autofocus>
   </p>
   <div class="muted">ตัวอย่างที่ใช้ทดสอบได้:</div>
   <p>
@@ -89,7 +89,9 @@
   function fill(v) {
     var el = document.getElementById('txt_imei');
     el.value = v; el.focus();
+    // ยิงทั้งสองจังหวะเหมือนคีย์บอร์ด/เครื่องสแกนจริง
     el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
   }
 
   // ── ต่อไปนี้คัดโครงมาจาก views/shopee/pickup/imei_new_api.ejs ──
@@ -115,8 +117,17 @@
   function note(msg) { show({ event: '(หน้าเดิม)', ผล: msg }); }
 </script>
 
-<!-- โหลดแบบเดียวกับที่จะใส่ในหน้าจริง -->
-<script async src="/hook.js"></script>
+<!-- โหลดแบบเดียวกับที่จะใส่ในหน้าจริง
+     ต่อ ?fresh= ท้าย URL ของหน้านี้เพื่อบังคับโหลด hook.js สดๆ ตอนทดสอบ
+     เพราะแคชของเบราว์เซอร์เคยทำให้ทดสอบได้ผลของโค้ดเก่าจนไล่หาสาเหตุผิดทาง -->
+<script>
+  (function () {
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = '/hook.js' + (location.search.indexOf('fresh') !== -1 ? '?t=' + Date.now() : '');
+    document.body.appendChild(s);
+  })();
+</script>
 
 </body>
 </html>
