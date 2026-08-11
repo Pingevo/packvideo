@@ -7,6 +7,7 @@ import { startMonitor } from './lib/monitor.js';
 import { startSweeper } from './lib/clips.js';
 import { ensureIndexes } from './lib/schema.js';
 import { reconcileOrphans } from './lib/repo.js';
+import { probeFfmpeg } from './lib/ffmpeg.js';
 
 for (const warning of configWarnings()) log.warn(warning);
 
@@ -33,6 +34,8 @@ connect(async () => {
 const server = createApp().listen(config.port, () => {
   log.info({ port: config.port, env: config.env, node: process.version }, 'packvideo พร้อมรับงาน');
 });
+
+await probeFfmpeg();
 
 startMonitor();
 startSweeper();

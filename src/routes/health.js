@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { pingDb, dbState } from '../db.js';
 import { storageStatus } from '../lib/storage.js';
 import { config } from '../config.js';
+import { ffmpegCaps } from '../lib/ffmpeg.js';
 
 const pkg = JSON.parse(
   await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
@@ -22,6 +23,9 @@ healthRouter.get('/health', async (_req, res) => {
   const checks = {
     mongo: { ...mongo, connected: dbState().connected },
     storage,
+    // ffmpeg ไม่พร้อม = ส่งออกหลักฐานไม่ได้ ซึ่งเป็นเหตุผลที่ระบบนี้มีอยู่
+    // ต้องเห็นในหน้า health ไม่ใช่ไปรู้ตอนทีมเคลมกำลังจะส่งหลักฐาน
+    ffmpeg: ffmpegCaps(),
   };
 
   // ดิสก์เต็มถึงระดับหยุดบันทึก = ปัญหาที่ต้องรีบรู้ แต่ไม่ใช่ "ระบบพัง"

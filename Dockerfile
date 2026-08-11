@@ -6,7 +6,14 @@ FROM node:22-bookworm-slim
 # ไม่ได้ใช้ตอนบันทึก เพราะ S1 ยืนยันแล้วว่าเบราว์เซอร์อัดเป็น MP4/H.264 ได้ตรง
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg tini ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ # ffmpeg บางบิลด์ไม่มีฟิลเตอร์ drawtext (คอมไพล์มาโดยไม่มี libfreetype)
+ # ซึ่งแปลว่าเบิร์นวันเวลาลงภาพไม่ได้ และไฟล์ที่ได้จะไม่ผ่านเงื่อนไขหลักฐานข้อ 4
+ # เจอมาแล้วกับ ffmpeg ของ homebrew บนเครื่องพัฒนา — ต้องดักตั้งแต่ตอน build
+ # ไม่ใช่ไปรู้ตอนทีมเคลมกำลังจะส่งหลักฐาน
+ && ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=64x64:d=0.1 \
+      -vf "drawtext=text='0':fontcolor=white:fontsize=12" -frames:v 1 -f null - \
+ && echo "ffmpeg: drawtext ใช้ได้"
 
 ENV NODE_ENV=production
 WORKDIR /app
