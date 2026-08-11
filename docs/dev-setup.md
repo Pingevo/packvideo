@@ -27,18 +27,21 @@ cp .env.example .env
 
 ## 3 · ผู้ใช้ MongoDB
 
-ระบบใช้ Mongo เครื่องเดียวกับ sellcenter แต่ **คนละ database** (`packvideo`)
+ระบบใช้ Mongo **เครื่องเดียวกับ sellcenter** แต่ **คนละ database** (`packVideo`)
 และควรมี **ผู้ใช้ของตัวเอง** ที่เข้าได้เฉพาะ database นี้ ไม่ใช้ผู้ใช้ของ `dbWallet`
+
+> ชื่อ database **แยกตัวพิมพ์เล็กใหญ่** — `packVideo` ไม่เท่ากับ `packvideo`
+> สร้างผู้ใช้ไว้คนละตัวพิมพ์กับ `MONGO_DB` แล้วจะ authenticate ผ่านแต่เขียนไม่ได้
 
 ### ถ้ายังไม่มีผู้ใช้ `packvideo`
 
 ต้องให้คนที่ดูแลเครื่อง Mongo สร้างให้ — คำสั่งนี้ต้องรันด้วยบัญชีที่มีสิทธิ์ผู้ดูแล
 
 ```
-db.getSiblingDB("packvideo").createUser({
+db.getSiblingDB("packVideo").createUser({
   user: "packvideo",
   pwd: passwordPrompt(),
-  roles: [{ role: "readWrite", db: "packvideo" }]
+  roles: [{ role: "readWrite", db: "packVideo" }]
 })
 ```
 
