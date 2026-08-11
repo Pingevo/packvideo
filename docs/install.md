@@ -100,7 +100,7 @@ cp .env.example .env && chmod 600 .env
 |---|---|---|
 | `NODE_ENV` | `production` | |
 | `MONGO_URL` | ตั้งโดย `npm run setup-mongo` | ห้ามแก้ด้วยมือ — รหัสผ่านที่มีอักขระพิเศษต้อง percent-encode |
-| `MONGO_DB` | `packVideo` | **แยกตัวพิมพ์เล็กใหญ่** |
+| `MONGO_DB` | ตั้งโดย `npm run setup-mongo` (`packVideo`) | ห้ามแก้ด้วยมือ — **แยกตัวพิมพ์เล็กใหญ่** และต้องตรงกับฐานข้อมูลใน `MONGO_URL` ไม่งั้นต่อได้แต่เขียนไม่ได้ |
 | `PACK_VIDEO_PATH` | `/data/pack_video` | path ใน container ไม่ใช่ path บนเครื่อง |
 | `ALLOWED_ORIGINS` | `https://digital.in.th` | origin ของ sellcenter ห้ามใส่ `*` |
 | `STATION_COUNT` | `6` | จำนวนโต๊ะ |
@@ -180,18 +180,28 @@ BASE=https://packvideo.digital.in.th npm run smoke
 
 ## 9. ต่อกับหน้าแพ็คของ sellcenter
 
-แก้ **2 ไฟล์ เพิ่มไฟล์ละ 1 บรรทัด**:
+บรรทัดนี้ **ใส่ไว้ในซอร์สของ sellcenter แล้ว** ท้ายไฟล์ทั้งสอง — เหลือแค่ deploy
 
 ```html
 <script async src="https://packvideo.digital.in.th/hook.js"></script>
 ```
 
-| ไฟล์ | วางตรงไหน |
+| ไฟล์ | สถานะ |
 |---|---|
-| `views/shopee/pickup/imei_new_api.ejs` | ท้ายไฟล์ |
-| `views/shopee/pickup/airways_hot_test2.ejs` | ท้ายไฟล์ |
+| `views/shopee/pickup/imei_new_api.ejs` | ✅ ใส่แล้ว |
+| `views/shopee/pickup/airways_hot_test2.ejs` | ✅ ใส่แล้ว |
+
+ตรวจก่อน deploy:
+
+```bash
+grep -rn "packvideo.digital.in.th/hook.js" views/shopee/pickup/
+```
 
 > ⚠️ **ต้องมี `async`** ไม่งั้นถ้าระบบวิดีโอช้าจะหน่วงการเรนเดอร์หน้าแพ็ค
+>
+> **deploy ข้อนี้เป็นข้อสุดท้าย** — ข้อ 1–8 ต้องเสร็จก่อน ถ้า `packvideo.digital.in.th`
+> ยังไม่ขึ้น สคริปต์จะโหลดไม่ได้ (หน้าแพ็คยังทำงานปกติเพราะ `async` แต่ไม่มีคลิปเลย
+> และ console จะมี error ให้พนักงานตกใจเปล่าๆ)
 >
 > deploy นอกเวลาแพ็คของ และเตรียมวิธีถอยไว้: เอา 2 บรรทัดนี้ออกแล้ว deploy กลับ
 

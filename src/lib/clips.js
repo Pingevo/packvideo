@@ -21,8 +21,23 @@ import * as repo from './repo.js';
 const ROOT = () => path.resolve(config.storage.path);
 const TMP = () => path.join(ROOT(), '_tmp');
 
-/** ไม่มีเหตุการณ์ใดๆ นานเท่านี้ = ปิดคลิปทิ้งเป็น timeout (FR-1.7) */
+/**
+ * เพดานความปลอดภัยสองชั้น (FR-1.7) — ชั้นเดียวไม่พอเพราะคลิปค้างมีสองแบบคนละสาเหตุ
+ *
+ * ชั้นที่ 1 `IDLE_MS` — เงียบสนิท ไม่มีทั้งสัญญาณและชิ้นวิดีโอ
+ *   แปลว่ากล้องหยุด หน้าต่างอัดถูกปิด หรือเน็ตขาดยาว คลิปตายแล้วแต่ยังค้างเปิดอยู่
+ *
+ * ชั้นที่ 2 `MAX_MS` — กล้องยังส่งวิดีโอเข้ามาเรื่อยๆ แต่ไม่มีการสแกนปิดสักที
+ *   ชั้นที่ 1 จับไม่ได้เลยเพราะชิ้นวิดีโอที่ไหลเข้ามารีเซ็ตตัวจับเวลาทุก ~3 วินาที
+ *   เคยเจอจริงตอนทดสอบ: คลิปเดียวอัดไป 14 นาที 100 MB โดยไม่มีอะไรหยุดมัน
+ *   ที่ ~7 MB/นาที ถ้าปล่อยค้างทั้งกะคือ ~3.4 GB ต่อโต๊ะ
+ *
+ * นับจาก `started_at` ไม่ใช่จากกิจกรรมล่าสุด จึงเป็นเพดานจริงที่ยืดไม่ได้
+ * และไม่ขัดกับ FR-1.6 (ห้ามจำกัดความยาวคลิปที่ค่าคงที่) เพราะนี่คือ **เพดานความปลอดภัย**
+ * ที่ตั้งไว้สูงกว่าเวลาแพ็คปกติมาก ไม่ใช่ความยาวที่ตั้งใจให้คลิปทั่วไปไปชน
+ */
 const IDLE_MS = 4 * 60 * 1000;
+const MAX_MS = () => config.clipMaxMinutes * 60 * 1000;
 
 /** @type {Map<string, object>} clip_id → clip */
 const clips = new Map();
@@ -344,8 +359,21 @@ export function startSweeper() {
     const now = Date.now();
     for (const clipId of [...openByStation.values()]) {
       const clip = clips.get(clipId);
-      if (clip && now - clip.last_activity.getTime() > IDLE_MS) {
+      if (!clip) continue;
+
+      if (now - clip.last_activity.getTime() > IDLE_MS) {
         await close(clipId, 'timeout', `ไม่มีเหตุการณ์นานเกิน ${IDLE_MS / 60000} นาที`);
+        continue;
+      }
+
+      // ยังมีชิ้นวิดีโอไหลเข้ามาอยู่ แต่ไม่มีการสแกนปิดจนเลยเพดาน
+      // แยก log เป็น warn เพราะแปลว่ามีคลิปที่ไม่ได้ปิดตามขั้นตอน ควรมีคนไปดูว่าทำไม
+      if (now - clip.started_at.getTime() > MAX_MS()) {
+        log.warn(
+          { clip_id: clipId, station_id: clip.station_id, ordersn: clip.ordersn },
+          `อัดเกินเพดาน ${config.clipMaxMinutes} นาทีโดยไม่มีการสแกนปิด — ปิดให้อัตโนมัติ`,
+        );
+        await close(clipId, 'timeout', `อัดเกินเพดาน ${config.clipMaxMinutes} นาทีโดยไม่มีการสแกนปิด`);
       }
     }
   }, 30_000);

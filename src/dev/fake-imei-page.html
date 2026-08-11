@@ -58,8 +58,14 @@
 
 <script>
   // ── ตั้งค่าเครื่องจำลอง (ของจริงมาจากหน้าตั้งค่า station_id ใน P1-3) ──
-  localStorage.setItem('packvideo.station_id', 'desk-dev');
-  localStorage.setItem('packvideo.token', 'dev-token');
+  // ตั้งให้เฉพาะตอนที่ยังไม่เคยตั้งค่า — ห้ามทับของจริงจาก setup.html
+  // หน้านี้กับ rec.html อยู่ origin เดียวกันจึงใช้ localStorage ก้อนเดียวกัน
+  // ถ้าทับทิ้ง สัญญาณจะไปเข้า desk-dev ส่วน rec.html ยังฟังอยู่ที่โต๊ะเดิม
+  // ผลคือสัญญาณเข้าครบทุกดวงแต่ไม่มีวิดีโอถูกอัดเลย และไม่มีอะไรฟ้องว่าผิด
+  if (!localStorage.getItem('packvideo.station_id')) {
+    localStorage.setItem('packvideo.station_id', 'desk-dev');
+    localStorage.setItem('packvideo.token', 'dev-token');
+  }
 
   // ── ดัก sendBeacon เพื่อแสดงสิ่งที่ hook ยิงออกไป (ยังยิงจริงด้วย) ──
   var _beacon = navigator.sendBeacon.bind(navigator);

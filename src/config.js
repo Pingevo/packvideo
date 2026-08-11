@@ -48,6 +48,9 @@ export const config = {
 
   retentionDays: int('RETENTION_DAYS', 30),
 
+  // เพดานความยาวคลิป — ปรับได้ช่วง pilot โดยไม่ต้องแก้โค้ด ดู clips.js §เพดานความปลอดภัย
+  clipMaxMinutes: int('CLIP_MAX_MINUTES', 15),
+
   // รายชื่อโต๊ะที่เลือกได้ในหน้าตั้งค่า — คลังมี 6 โต๊ะขึ้นไป
   stations: (() => {
     const listed = list('STATIONS');
@@ -70,7 +73,7 @@ const KNOWN_KEYS = new Set([
   'NODE_ENV', 'PORT', 'LOG_LEVEL',
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
-  'RETENTION_DAYS', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
+  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
 ]);
 
@@ -99,8 +102,30 @@ function editDistance(a, b) {
   return prev[b.length];
 }
 
+/**
+ * ชื่อฐานข้อมูลที่อยู่ใน MONGO_URL — ส่วนหลัง host ก่อนเครื่องหมายคำถาม
+ * ตัดเฉพาะส่วนนี้ ไม่แตะ credential ที่อยู่หน้า @ จึงไม่มีทางหลุดออกไปกับข้อความเตือน
+ */
+function dbNameInUrl(url) {
+  const m = /^mongodb(?:\+srv)?:\/\/[^/]*\/([^?]*)/.exec(url ?? '');
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]) || null; } catch { return m[1] || null; }
+}
+
 export function configWarnings() {
   const warnings = [];
+
+  // ตั้ง MONGO_URL ไว้ฐานข้อมูลหนึ่งแต่ MONGO_DB ชี้อีกฐานข้อมูลหนึ่ง = เชื่อมต่อผ่าน
+  // แต่ผู้ใช้ไม่มีสิทธิ์ในฐานข้อมูลที่เปิดจริง แล้วพังตอนเขียนครั้งแรกด้วย "not authorized"
+  // ซึ่ง repo.js กลืน error ไว้ไม่ให้ล้ม process — อาการที่เห็นคือระบบเงียบ ไม่มีคลิปโผล่มาเลย
+  // เจอง่ายเป็นพิเศษเพราะชื่อฐานข้อมูลแยกตัวพิมพ์เล็กใหญ่: packVideo ไม่เท่ากับ packvideo
+  const urlDb = dbNameInUrl(process.env.MONGO_URL);
+  if (urlDb && urlDb !== config.mongo.dbName) {
+    warnings.push(
+      `MONGO_URL ชี้ฐานข้อมูล ${urlDb} แต่ MONGO_DB คือ ${config.mongo.dbName} — ` +
+      'ต้องเป็นชื่อเดียวกัน (แยกตัวพิมพ์เล็กใหญ่) ไม่งั้นเขียนฐานข้อมูลไม่ได้',
+    );
+  }
 
   for (const [key, value] of Object.entries(process.env)) {
     if (!KNOWN_KEYS.has(key)) {
@@ -140,6 +165,11 @@ export function validateConfig() {
   }
   if (config.storage.warnPct >= config.storage.stopPct) {
     problems.push('DISK_WARN_PCT ต้องน้อยกว่า DISK_STOP_PCT');
+  }
+  // ต้องสูงกว่าเพดานเงียบ 4 นาทีของ clips.js พอสมควร ไม่งั้นเพดานนี้จะไปตัดคลิปที่แพ็คนาน
+  // ตามปกติทิ้ง แทนที่จะจับเฉพาะคลิปที่ไม่มีการสแกนปิดจริงๆ
+  if (config.clipMaxMinutes < 5) {
+    problems.push('CLIP_MAX_MINUTES ต้องไม่น้อยกว่า 5 — ต่ำกว่านี้จะตัดคลิปที่แพ็คนานตามปกติทิ้ง');
   }
   return problems;
 }

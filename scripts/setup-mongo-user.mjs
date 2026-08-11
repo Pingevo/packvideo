@@ -16,7 +16,10 @@ import { createInterface } from 'node:readline';
 import { MongoClient } from 'mongodb';
 
 const ENV_PATH = new URL('../.env', import.meta.url);
-const DB_NAME = 'packvideo';
+// ชื่อฐานข้อมูลแยกตัวพิมพ์เล็กใหญ่ — ต้องตรงกับ MONGO_DB เป๊ะๆ ไม่งั้นผู้ใช้ที่สร้างที่นี่
+// จะ authenticate ผ่านแต่ไม่มีสิทธิ์ในฐานข้อมูลที่ระบบเปิดจริง แล้วพังตอนเขียนครั้งแรก
+// สคริปต์นี้จึงเขียน MONGO_DB ลง .env ให้ด้วย ไม่ปล่อยให้ตั้งเองแล้วหลุด
+const DB_NAME = 'packVideo';
 const DB_USER = 'packvideo';
 
 const isTty = process.stdin.isTTY === true;
@@ -144,15 +147,22 @@ try {
 // ── เขียนลง .env ─────────────────────────────────────────────
 const original = await readFile(ENV_PATH, 'utf8').catch(() => '');
 const lines = original ? original.split('\n') : [];
-const idx = lines.findIndex((l) => /^\s*M+ONGO_URL\s*=/.test(l));
-if (idx === -1) lines.push(`MONGO_URL=${url}`);
-else lines[idx] = `MONGO_URL=${url}`;
+
+function setKey(key, value, typoPattern) {
+  const idx = lines.findIndex((l) => typoPattern.test(l));
+  if (idx === -1) lines.push(`${key}=${value}`);
+  else lines[idx] = `${key}=${value}`;
+}
+
+setKey('MONGO_URL', url, /^\s*M+ONGO_URL\s*=/);
+setKey('MONGO_DB', DB_NAME, /^\s*M+ONGO_DB\s*=/);
 
 await writeFile(ENV_PATH, lines.join('\n'), 'utf8');
 await chmod(ENV_PATH, 0o600);
 
 line('\n\x1b[32m✓ เสร็จแล้ว\x1b[0m');
 line(`  ผู้ใช้ ${DB_USER} มีสิทธิ์ readWrite เฉพาะฐานข้อมูล ${DB_NAME}`);
+line(`  เขียน MONGO_URL และ MONGO_DB=${DB_NAME} ลง .env แล้ว — ห้ามแก้ชื่อฐานข้อมูลด้วยมือ`);
 line('  รหัสผ่านถูกสุ่มและเขียนลง .env เท่านั้น (สิทธิ์ 600 · ไม่เข้า git)');
 line('\n  ต่อไป:  npm run dev   แล้วอีกหน้าต่างหนึ่ง  npm run smoke\n');
 

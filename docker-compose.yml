@@ -12,7 +12,9 @@ services:
       NODE_ENV: production
       PORT: 1338
       MONGO_URL: ${MONGO_URL}
-      MONGO_DB: packvideo
+      # ต้องอ่านจาก .env ตัวเดียวกับที่ setup-mongo เขียนไว้ ห้าม hardcode
+      # ชื่อฐานข้อมูลแยกตัวพิมพ์เล็กใหญ่ — ตั้งไม่ตรงกับสิทธิ์ของผู้ใช้แล้วพังตอนเขียนครั้งแรก
+      MONGO_DB: ${MONGO_DB:-packVideo}
       PACK_VIDEO_PATH: /data/pack_video
       DISK_WARN_PCT: 75
       DISK_SQUEEZE_PCT: 85

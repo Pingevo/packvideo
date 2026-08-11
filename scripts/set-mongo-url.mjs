@@ -48,7 +48,8 @@ async function ask(question, { hidden = false } = {}) {
 }
 const host = (await ask('โฮสต์ [digital.in.th:27017]: ')).trim() || 'digital.in.th:27017';
 const user = (await ask('ผู้ใช้ [packvideo]: ')).trim() || 'packvideo';
-const dbName = (await ask('ฐานข้อมูล [packvideo]: ')).trim() || 'packvideo';
+// แยกตัวพิมพ์เล็กใหญ่ — packVideo ไม่เท่ากับ packvideo และผู้ใช้มีสิทธิ์แค่ตัวเดียว
+const dbName = (await ask('ฐานข้อมูล [packVideo]: ')).trim() || 'packVideo';
 const pwd = await ask('รหัสผ่าน (ไม่แสดงบนจอ): ', { hidden: true });
 
 if (!pwd) {
@@ -93,12 +94,20 @@ try {
 
 const original = await readFile(ENV_PATH, 'utf8');
 const lines = original.split('\n');
-const idx = lines.findIndex((l) => /^\s*M+ONGO_URL\s*=/.test(l));   // เผื่อชื่อคีย์ที่พิมพ์ผิดไว้ก่อนหน้า
-if (idx === -1) lines.push(`MONGO_URL=${url}`);
-else lines[idx] = `MONGO_URL=${url}`;
+
+// เขียน MONGO_DB คู่กันเสมอ — ตั้ง URL ไว้ฐานข้อมูลหนึ่งแต่ MONGO_DB ชี้อีกฐานข้อมูลหนึ่ง
+// จะ authenticate ผ่านแล้วไปพังตอนเขียนครั้งแรกด้วย "not authorized" ที่ชี้ไปผิดทาง
+function setKey(key, value, typoPattern) {
+  const idx = lines.findIndex((l) => typoPattern.test(l));   // เผื่อชื่อคีย์ที่พิมพ์ผิดไว้ก่อนหน้า
+  if (idx === -1) lines.push(`${key}=${value}`);
+  else lines[idx] = `${key}=${value}`;
+}
+
+setKey('MONGO_URL', url, /^\s*M+ONGO_URL\s*=/);
+setKey('MONGO_DB', dbName, /^\s*M+ONGO_DB\s*=/);
 
 await writeFile(ENV_PATH, lines.join('\n'), 'utf8');
 await chmod(ENV_PATH, 0o600);   // .env ถูก gitignore อยู่แล้ว แต่จำกัดสิทธิ์ในเครื่องด้วย
 
-console.log('\n✓ เขียน MONGO_URL ลง .env แล้ว (สิทธิ์ 600 · ไม่เข้า git)');
+console.log(`\n✓ เขียน MONGO_URL และ MONGO_DB=${dbName} ลง .env แล้ว (สิทธิ์ 600 · ไม่เข้า git)`);
 console.log('  ต่อไป: npm run dev แล้วอีกหน้าต่างหนึ่ง npm run smoke\n');
