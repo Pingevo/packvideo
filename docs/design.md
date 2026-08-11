@@ -33,7 +33,7 @@
 graph LR
   subgraph desk["คอมโต๊ะแพ็ค × 6"]
     T1["แท็บทำงาน<br/>digital.in.th/shopee/imei"]
-    T2["หน้าต่างอัด<br/>packvideo.digital.in.th/rec"]
+    T2["หน้าต่างอัด<br/>pack.digital.in.th/rec"]
   end
 
   subgraph sell["sellcenter (Node 12, Sails 0.12)"]
@@ -708,7 +708,7 @@ services:
 
 ### 11.2 nginx
 
-server block ใหม่สำหรับ `packvideo.digital.in.th` — SSL จัดการที่ nginx เหมือนเดิม
+server block ใหม่สำหรับ `pack.digital.in.th` — SSL จัดการที่ nginx เหมือนเดิม
 ([config/env/production.js:24](../../sellcenter/config/env/production.js))
 
 | จุด | ต้องตั้ง | ทำไม |

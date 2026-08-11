@@ -10,7 +10,7 @@
 
 | # | สิ่งที่ต้องมี | ตรวจยังไง | ถ้าไม่มี |
 |---|---|---|---|
-| 1 | **subdomain + SSL cert** เช่น `packvideo.digital.in.th` | `curl -I https://packvideo.digital.in.th` | ⛔ ติดตั้งไม่ได้เลย — กล้องในเบราว์เซอร์ไม่ทำงานบน http และ `sendBeacon` จากหน้า https ไปยัง http จะถูกบล็อก |
+| 1 | **subdomain + SSL cert** เช่น `pack.digital.in.th` | `curl -I https://pack.digital.in.th` | ⛔ ติดตั้งไม่ได้เลย — กล้องในเบราว์เซอร์ไม่ทำงานบน http และ `sendBeacon` จากหน้า https ไปยัง http จะถูกบล็อก |
 | 2 | **HDD 1 TB** ที่ยังว่าง | `lsblk` | ⛔ ไม่มีที่เก็บคลิป |
 | 3 | **Docker + docker compose** | `docker --version` | ⛔ |
 | 4 | **nginx** ที่มีอยู่แล้ว | `nginx -v` | ⛔ |
@@ -158,7 +158,7 @@ sudo ln -s /etc/nginx/sites-available/packvideo /etc/nginx/sites-enabled/ && sud
 ## 7. ตรวจว่าติดตั้งถูก
 
 ```bash
-BASE=https://packvideo.digital.in.th npm run smoke
+BASE=https://pack.digital.in.th npm run smoke
 ```
 
 ต้องได้ **9/9 ผ่าน** ถ้าข้อไหนไม่ผ่านให้แก้ก่อนไปต่อ
@@ -167,7 +167,7 @@ BASE=https://packvideo.digital.in.th npm run smoke
 
 ## 8. ตั้งค่าเครื่องโต๊ะแพ็ค (ทำทีละเครื่อง)
 
-เปิด `https://packvideo.digital.in.th/setup.html` บนเครื่องนั้น
+เปิด `https://pack.digital.in.th/setup.html` บนเครื่องนั้น
 
 1. เลือกโต๊ะ — โต๊ะที่มีเครื่องอื่นใช้อยู่จะกดไม่ได้และบอกว่าชนกับเครื่องไหน
 2. ตั้งชื่อเครื่อง เช่น "คอมโต๊ะ 3 ริมหน้าต่าง"
@@ -183,7 +183,7 @@ BASE=https://packvideo.digital.in.th npm run smoke
 บรรทัดนี้ **ใส่ไว้ในซอร์สของ sellcenter แล้ว** ท้ายไฟล์ทั้งสอง — เหลือแค่ deploy
 
 ```html
-<script async src="https://packvideo.digital.in.th/hook.js"></script>
+<script async src="https://pack.digital.in.th/hook.js"></script>
 ```
 
 | ไฟล์ | สถานะ |
@@ -194,12 +194,12 @@ BASE=https://packvideo.digital.in.th npm run smoke
 ตรวจก่อน deploy:
 
 ```bash
-grep -rn "packvideo.digital.in.th/hook.js" views/shopee/pickup/
+grep -rn "pack.digital.in.th/hook.js" views/shopee/pickup/
 ```
 
 > ⚠️ **ต้องมี `async`** ไม่งั้นถ้าระบบวิดีโอช้าจะหน่วงการเรนเดอร์หน้าแพ็ค
 >
-> **deploy ข้อนี้เป็นข้อสุดท้าย** — ข้อ 1–8 ต้องเสร็จก่อน ถ้า `packvideo.digital.in.th`
+> **deploy ข้อนี้เป็นข้อสุดท้าย** — ข้อ 1–8 ต้องเสร็จก่อน ถ้า `pack.digital.in.th`
 > ยังไม่ขึ้น สคริปต์จะโหลดไม่ได้ (หน้าแพ็คยังทำงานปกติเพราะ `async` แต่ไม่มีคลิปเลย
 > และ console จะมี error ให้พนักงานตกใจเปล่าๆ)
 >
@@ -209,7 +209,7 @@ grep -rn "packvideo.digital.in.th/hook.js" views/shopee/pickup/
 
 ## 10. ตรวจหลังติดตั้ง
 
-เปิด `https://packvideo.digital.in.th/monitor.html` แล้วให้พนักงานสแกน 5 ออเดอร์
+เปิด `https://pack.digital.in.th/monitor.html` แล้วให้พนักงานสแกน 5 ออเดอร์
 
 | ต้องเห็น | ถ้าไม่เห็น |
 |---|---|

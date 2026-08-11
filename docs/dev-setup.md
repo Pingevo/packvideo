@@ -83,7 +83,7 @@ npm run smoke
 ที่ระบุว่าต้องเปิด `/api/health` จากเครื่องโต๊ะแพ็คได้:
 
 ```bash
-BASE=https://packvideo.digital.in.th npm run smoke
+BASE=https://pack.digital.in.th npm run smoke
 ```
 
 ## สิ่งที่ห้ามทำ

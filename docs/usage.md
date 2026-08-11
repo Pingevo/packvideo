@@ -18,7 +18,7 @@
 เปิดหน้าต่างอัดไว้ **1 ครั้งต่อกะ** แล้ววางไว้มุมจอ
 
 ```
-https://packvideo.digital.in.th/rec.html
+https://pack.digital.in.th/rec.html
 ```
 
 **ห้ามปิดหน้าต่างนี้ระหว่างกะ** — ปิดเมื่อไรโต๊ะนี้หยุดอัดทันที และคลิปที่กำลังอัดอยู่จะไม่สมบูรณ์
@@ -68,7 +68,7 @@ https://packvideo.digital.in.th/rec.html
 ## 2 · หัวหน้าคลัง
 
 ```
-https://packvideo.digital.in.th/monitor.html
+https://pack.digital.in.th/monitor.html
 ```
 
 รีเฟรชเองทุก 10 วินาที เปิดค้างไว้บนจอได้
@@ -213,7 +213,7 @@ GET /api/health
 ดูอะไรบ้าง: `mongo` · `storage` (พื้นที่ ระดับ เขียนได้ไหม) · `ffmpeg` (ส่งออกหลักฐานได้ไหม)
 
 ```bash
-BASE=https://packvideo.digital.in.th npm run smoke
+BASE=https://pack.digital.in.th npm run smoke
 ```
 
 ### การแจ้งเตือนที่จะได้รับ
@@ -235,13 +235,13 @@ BASE=https://packvideo.digital.in.th npm run smoke
 **สั่งซ้อมด้วยมือ** (ไม่ลบจริง):
 
 ```bash
-curl -X POST https://packvideo.digital.in.th/api/retention/run -H 'Content-Type: application/json' -d '{}'
+curl -X POST https://pack.digital.in.th/api/retention/run -H 'Content-Type: application/json' -d '{}'
 ```
 
 **สั่งลบจริง** ต้องส่ง `confirm`:
 
 ```bash
-curl -X POST https://packvideo.digital.in.th/api/retention/run -H 'Content-Type: application/json' -d '{"confirm":true}'
+curl -X POST https://pack.digital.in.th/api/retention/run -H 'Content-Type: application/json' -d '{"confirm":true}'
 ```
 
 > งานนี้ **ยอมไม่ลบดีกว่าลบผิด** — ถ้าย้ายคลิปที่ตรึงไว้ไม่ครบ มันจะข้ามทั้งวันนั้น

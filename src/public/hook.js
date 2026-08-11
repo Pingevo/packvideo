@@ -1,7 +1,7 @@
 /**
  * hook.js — สคริปต์ที่หน้าแพ็คของ sellcenter โหลด
  *
- *   <script async src="https://packvideo.digital.in.th/hook.js"></script>
+ *   <script async src="https://pack.digital.in.th/hook.js"></script>
  *
  * หน้าที่เดียว: ยิงสัญญาณบอกว่าเกิดอะไรขึ้นที่โต๊ะ **แล้วไม่รอคำตอบ**
  * ห้ามทำให้หน้าแพ็คช้าลงหรือพังไม่ว่ากรณีใด (NFR-1.1)
