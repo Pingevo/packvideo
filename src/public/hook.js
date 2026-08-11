@@ -254,7 +254,28 @@
   }
 
   // ── เริ่มทำงาน ──────────────────────────────────────────────
-  var INTERCEPT_TRACKING = true;
+  /**
+   * ปิดการดักค่าที่ไม่ใช่ IMEI ได้ทันทีโดยไม่ต้อง deploy อะไรเลย
+   *
+   *   localStorage.setItem('packvideo.intercept','off')   แล้วรีเฟรช
+   *
+   * นี่เป็นสิ่งเดียวที่ hook ทำแล้ว **หยุดการทำงานของหน้าเดิม** ถ้าตัดสินผิด
+   * พนักงานจะสแกนแล้วไม่มีอะไรเกิดขึ้น จึงต้องปิดได้ทันทีที่หน้างาน
+   */
+  var INTERCEPT_TRACKING = readFlag('packvideo.intercept') !== 'off';
+
+  /** เปิดดูว่า hook ตัดสินอะไร:  localStorage.setItem('packvideo.debug','1') */
+  var DEBUG = readFlag('packvideo.debug') === '1';
+
+  function readFlag(k) {
+    try { return localStorage.getItem(k); } catch (e) { return null; }
+  }
+
+  function debug() {
+    if (!DEBUG) return;
+    try { console.log.apply(console, ['[packvideo]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+
   var hasJquery = false;
 
   function boot() {
