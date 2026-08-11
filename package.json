@@ -20,7 +20,9 @@
     "pree2e": "node scripts/check-node.cjs",
     "e2e": "node scripts/e2e-clip.mjs",
     "presetup-mongo": "node scripts/check-node.cjs",
-    "setup-mongo": "node scripts/setup-mongo-user.mjs"
+    "setup-mongo": "node scripts/setup-mongo-user.mjs",
+    "pree2e:retention": "node scripts/check-node.cjs",
+    "e2e:retention": "node --env-file-if-exists=.env scripts/e2e-retention.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

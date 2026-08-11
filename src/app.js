@@ -10,6 +10,7 @@ import { monitorRouter } from './routes/monitor.js';
 import { clipsRouter, mediaRouter } from './routes/clips.js';
 import { searchRouter } from './routes/search.js';
 import { exportRouter } from './routes/export.js';
+import { pinRouter } from './routes/pin.js';
 import { devRouter } from './dev/routes.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
@@ -35,6 +36,7 @@ export function createApp() {
   app.use('/api', clipsRouter);
   app.use('/api', searchRouter);
   app.use('/api', exportRouter);
+  app.use('/api', pinRouter);
   app.use('/media', mediaRouter);
 
   app.use(signalCors);

@@ -8,6 +8,7 @@ import { startSweeper } from './lib/clips.js';
 import { ensureIndexes } from './lib/schema.js';
 import { reconcileOrphans } from './lib/repo.js';
 import { probeFfmpeg } from './lib/ffmpeg.js';
+import { startRetention } from './lib/retention.js';
 
 for (const warning of configWarnings()) log.warn(warning);
 
@@ -39,6 +40,7 @@ await probeFfmpeg();
 
 startMonitor();
 startSweeper();
+startRetention();
 
 // การอัปโหลดชิ้นวิดีโอเป็น request สั้นๆ แต่ SSE เป็น request ยาว — ตั้งให้ยาวกว่าค่าปริยาย
 server.keepAliveTimeout = 65_000;
