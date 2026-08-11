@@ -103,7 +103,64 @@
   function setText(id, v) { $(id).textContent = v; }
 
   // ── กล้อง ───────────────────────────────────────────────────
+  /**
+   * โหมดสาธิต: ใช้ภาพจาก canvas แทนกล้อง สำหรับดูการทำงานบนเครื่องที่ไม่มีกล้อง
+   *
+   * **ต้องใช้ไม่ได้บน production เด็ดขาด** — ถ้าเปิดได้จะบันทึกภาพที่ไม่ใช่ของจริง
+   * ลงเป็นหลักฐาน จึงถาม /api/health ก่อนว่าเซิร์ฟเวอร์เป็น production หรือไม่
+   * ไม่ใช่เชื่อค่าจาก URL อย่างเดียว
+   */
+  function fakeCameraAllowed() {
+    if (location.search.indexOf('fakecam') === -1) return Promise.resolve(false);
+    return fetch('/api/health')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.env === 'production') {
+          warn('โหมดกล้องจำลองใช้บนระบบจริงไม่ได้');
+          return false;
+        }
+        return true;
+      })
+      .catch(function () { return false; });
+  }
+
+  function fakeCameraStream() {
+    var cv = document.createElement('canvas');
+    cv.width = 1280; cv.height = 720;
+    var ctx = cv.getContext('2d');
+    var t0 = Date.now();
+    var stream = cv.captureStream(0);
+    var track = stream.getVideoTracks()[0];
+    setInterval(function () {
+      var t = (Date.now() - t0) / 1000;
+      ctx.fillStyle = '#1b2430'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 44px monospace';
+      ctx.fillText('โหมดสาธิต — ไม่ใช่ภาพจากกล้องจริง', 60, 110);
+      ctx.font = '30px monospace';
+      ctx.fillText(new Date().toLocaleString('th-TH'), 60, 170);
+      ctx.fillText('t = ' + t.toFixed(1) + ' s', 60, 220);
+      // กล่องเคลื่อนที่ ให้ตัวเข้ารหัสมีอะไรให้บีบจริงๆ ไม่ใช่ภาพนิ่ง
+      ctx.fillStyle = '#4a9eff';
+      ctx.fillRect(60 + ((t * 160) % (cv.width - 320)), 300, 240, 240);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 52px monospace';
+      ctx.fillText(S.tracking || 'รอเลขพัสดุ', 60, 640);
+      if (track.requestFrame) track.requestFrame();
+    }, 40);
+    return stream;
+  }
+
   function startCamera() {
+    return fakeCameraAllowed().then(function (fake) {
+      if (!fake) return realCamera();
+      var s = fakeCameraStream();
+      S.stream = s;
+      $('preview').srcObject = s;
+      warn('โหมดสาธิต — ภาพที่บันทึกไม่ใช่ภาพจากกล้องจริง');
+      return s;
+    });
+  }
+
+  function realCamera() {
     var camId = localStorage.getItem(K.camera);
     var constraints = {
       audio: false,   // ไม่บันทึกเสียงเด็ดขาด ไม่มีสวิตช์ให้เปิด (FR-1.11 · PDPA)
