@@ -181,16 +181,23 @@
           var value = (el.value || '').trim();
           if (!value) return;
 
-          if (isTrackingLike(value)) {
-            // ค่านี้ไม่ใช่ IMEI — ถ้าปล่อยให้หน้าเดิมยิง API จะเด้งไปหน้า not_found ทุกออเดอร์
-            // ดูหมายเหตุเรื่องนี้ใน docs/design.md §4.2.1
-            if (INTERCEPT_TRACKING) {
-              ev.preventDefault();
-              ev.stopImmediatePropagation();
-              // เคลียร์ช่องตอน keyup เท่านั้น ถ้าเคลียร์ตอน keydown ค่าจะหายไป
-              // ก่อนที่ keyup จะได้อ่าน แล้วเราจะดักตัวที่สองไม่ทัน
-              if (type === 'keyup') el.value = '';
-            }
+          // ตรงกับเลขพัสดุที่รอให้สแกนปิดคลิปอยู่ — ตัวเดียวที่เรากล้าดัก
+          if (INTERCEPT_TRACKING && isExpectedTracking(value)) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            // เคลียร์ช่องตอน keyup เท่านั้น ถ้าเคลียร์ตอน keydown ค่าจะหายไป
+            // ก่อนที่ keyup จะได้อ่าน แล้วเราจะดักตัวที่สองไม่ทัน
+            if (type === 'keyup') { el.value = ''; clearExpected(); }
+            debug('ดักเลขพัสดุที่รออยู่', value);
+            beacon('scan', { value: value, trace_id: uuid() });
+            return;
+          }
+
+          // ไม่ตรงกับที่รออยู่ — **ปล่อยให้หน้าเดิมทำงานตามปกติเสมอ**
+          // ถ้าเป็นเลขพัสดุใบอื่นก็ยังยิงสัญญาณไปให้เซิร์ฟเวอร์ตรวจว่าแปะผิดใบ
+          // แต่ไม่กลืนค่าไว้ เพราะเราไม่รู้ว่าหน้าเดิมต้องใช้ค่านี้ทำอะไรหรือเปล่า
+          if (looksLikeTracking(value)) {
+            debug('เลขพัสดุที่ไม่ตรงกับที่รออยู่ — ส่งต่อให้หน้าเดิมตามปกติ', value);
             beacon('scan', { value: value, trace_id: uuid() });
             return;
           }
@@ -203,12 +210,60 @@
     });
   }
 
-  // เลขพัสดุมีตัวอักษรนำ (SPX… TH…) ส่วน IMEI เป็นตัวเลขล้วน 15 หลัก
-  // ชั้นนี้แค่คัดหยาบๆ การตัดสินจริงว่าตรงกับคลิปที่กำลังอัดไหม ทำที่เซิร์ฟเวอร์
-  function isTrackingLike(v) {
-    var cleaned = v.replace(/[\s/-]/g, '');
-    if (/^\d{15}$/.test(cleaned)) return false;          // IMEI
-    if (/^\d+$/.test(cleaned)) return false;             // ตัวเลขล้วนความยาวอื่น ปล่อยให้ระบบเดิมตัดสิน
+  function normalise(v) {
+    return String(v || '').replace(/[\s/-]/g, '').toUpperCase();
+  }
+
+  /**
+   * จำเลขพัสดุที่เพิ่งพิมพ์ใบปะหน้าไป เพื่อรู้ว่ากำลังรอให้สแกนเลขไหนปิดคลิป
+   *
+   * ต้องเก็บข้ามหน้า เพราะหน้าใบปะหน้าจะ redirect กลับ /shopee/imei ก่อนที่พนักงาน
+   * จะสแกนปิด — คนละการโหลดหน้ากัน ตัวแปรในหน่วยความจำจึงใช้ไม่ได้
+   */
+  function rememberExpected(tracking) {
+    try {
+      if (!tracking) return;
+      localStorage.setItem('packvideo.expect',
+        JSON.stringify({ v: normalise(tracking), at: Date.now() }));
+    } catch (e) { swallow(e); }
+  }
+
+  function expectedTracking() {
+    try {
+      var raw = localStorage.getItem('packvideo.expect');
+      if (!raw) return null;
+      var o = JSON.parse(raw);
+      // เกิน 10 นาทีถือว่าเลิกรอ — กันค้างข้ามกะแล้วไปดักค่าของออเดอร์อื่น
+      if (!o || !o.v || Date.now() - o.at > 10 * 60 * 1000) {
+        localStorage.removeItem('packvideo.expect');
+        return null;
+      }
+      return o.v;
+    } catch (e) { return null; }
+  }
+
+  function clearExpected() {
+    try { localStorage.removeItem('packvideo.expect'); } catch (e) {}
+  }
+
+  /**
+   * ค่านี้คือเลขพัสดุที่เรากำลังรอให้สแกนปิดคลิปหรือเปล่า
+   *
+   * **ดักเฉพาะค่าที่ตรงกับที่รออยู่เท่านั้น** ไม่ดักตามรูปแบบ
+   *
+   * เดิมดักทุกค่าที่มีตัวอักษรและยาว >= 8 ซึ่งกว้างเกินไป — ค่าอื่นที่หน้าเดิม
+   * ต้องใช้ (เช่นเลขออเดอร์ที่มีตัวอักษร) จะถูกกลืนไปด้วย แล้วพนักงานสแกนแล้ว
+   * ไม่มีอะไรเกิดขึ้น · การเทียบกับค่าที่รออยู่จริงทำให้ผิดพลาดไม่ได้เลย
+   */
+  function isExpectedTracking(v) {
+    var want = expectedTracking();
+    return !!want && normalise(v) === want;
+  }
+
+  /** เลขพัสดุแบบหยาบๆ — ใช้แค่ตัดสินว่าจะยิงสัญญาณ scan ไหม ไม่ใช้ตัดสินว่าจะดักไหม */
+  function looksLikeTracking(v) {
+    var cleaned = normalise(v);
+    if (/^\d+$/.test(cleaned)) return false;             // ตัวเลขล้วน = IMEI หรือของระบบเดิม
     return /[A-Za-z]/.test(cleaned) && cleaned.length >= 8;
   }
 
@@ -237,6 +292,8 @@
 
   function onLabelPage() {
     var tracking = readTracking();
+    // จำไว้ว่ากำลังรอเลขนี้ เพื่อให้ดักได้ตอนพนักงานสแกนปิดหลังหน้าเด้งกลับ
+    rememberExpected(tracking);
     // ยิง tag เสมอแม้หาเลขไม่เจอ — ตัวนับนี้คือตัวหารของ health check (design D6)
     // ถ้าไม่ยิงตอนหาไม่เจอ ปัญหาจะกลายเป็นมองไม่เห็นแทนที่จะขึ้นเป็นตัวเลข
     beacon('tag', {
@@ -278,15 +335,28 @@
 
   var hasJquery = false;
 
+  /**
+   * เครื่องนี้ใช้ระบบวิดีโอหรือเปล่า
+   *
+   * คลังมีเครื่องที่ไม่ได้ต่อกล้อง และเครื่องเหล่านั้นก็โหลด hook.js ตัวเดียวกัน
+   * เพราะ script tag อยู่ในหน้าแพ็คที่ใช้ร่วมกันทุกเครื่อง
+   *
+   * **เครื่องที่ยังไม่ได้ตั้งค่าต้องไม่ถูกแตะเลยแม้แต่นิดเดียว** — ไม่ผูกตัวรับ
+   * ไม่ดัก Enter ไม่แตะ DOM ไม่ยิงอะไรทั้งนั้น เพราะการดัก Enter บนเครื่อง
+   * ที่ไม่มี station จะกลืนการสแกนไปเฉยๆ แล้วพนักงานจะสแกนแล้วไม่มีอะไรเกิดขึ้น
+   */
+  var ACTIVE = !!(BASE && station && token);
+
   function boot() {
     try {
+      if (!ACTIVE) {
+        debug('เครื่องนี้ไม่ได้ตั้งค่าใช้ระบบวิดีโอ — hook ไม่ทำงานอะไรเลย');
+        return;   // ออกก่อนผูกตัวรับใดๆ ทั้งสิ้น
+      }
       hasJquery = bindAjax();
       bindKey();
       if (isLabelPage()) onLabelPage();
-      if (!station || !token) {
-        // ไม่ขัดจังหวะงาน แค่ให้เห็นว่าเครื่องนี้ยังไม่ได้ตั้งค่า
-        try { console.warn('[packvideo] เครื่องนี้ยังไม่ได้ตั้ง station_id — ไม่มีการบันทึก'); } catch (e) {}
-      }
+      debug('ทำงานที่โต๊ะ', station, '· ดักเลขพัสดุ:', INTERCEPT_TRACKING ? 'เปิด' : 'ปิด');
     } catch (err) { swallow(err); }
   }
 
