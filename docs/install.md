@@ -186,10 +186,24 @@ BASE=https://pack.digital.in.th npm run smoke
 <script async src="https://pack.digital.in.th/hook.js"></script>
 ```
 
-| ไฟล์ | สถานะ |
-|---|---|
-| `views/shopee/pickup/imei_new_api.ejs` | ✅ ใส่แล้ว |
-| `views/shopee/pickup/airways_hot_test2.ejs` | ✅ ใส่แล้ว |
+| ไฟล์ | หน้าอะไร | สถานะ |
+|---|---|---|
+| `imei_new_api.ejs` | หน้าสแกน IMEI | ✅ |
+| `airways_hot_test2.ejs` | ใบปะหน้า — `airway_new` · `airway_booking` | ✅ |
+| `airways_hot_test.ejs` | ใบปะหน้า — `airway` (ตัวเก่า) | ✅ |
+| `airways_hot_large.ejs` | ใบปะหน้าแบบ large — `GetLargeAirway` · `GetLargeAirwayJT` | ✅ + ป้าย |
+| `printed.ejs` | "พิมพ์ใบปะหน้าไปแล้ว" | ✅ + ป้าย |
+
+> ⚠️ **ทุกหน้าที่มีเลขพัสดุต้องมี hook ไม่ใช่แค่หน้าใบปะหน้าหลัก** — `GetSingleAirwayNew`
+> เรนเดอร์ได้หลายหน้า ถ้าพนักงานสแกน IMEI ของออเดอร์ที่พิมพ์ใบไปแล้ว จะได้ `printed.ejs`
+> ซึ่งถ้าไม่มี hook ระบบจะไม่รู้เลขพัสดุ แล้วการสแกนปิดคลิปจะหลุดไปหาระบบเดิมจนเด้ง
+> `not_found` และคลิปจบเป็น `unverified` แทน `verified` (เจอจริงตอน pilot วันแรก)
+>
+> หน้าที่พิมพ์เลขพัสดุเป็นข้อความเฉยๆ (ไม่มี `arr_tracking` หรือ `<svg id="svg_…">`)
+> ต้องเพิ่มป้ายให้ hook อ่านด้วย 1 บรรทัด:
+> ```html
+> <span data-packvideo-tracking="<%= tracking_no %>" hidden></span>
+> ```
 
 ตรวจก่อน deploy:
 
