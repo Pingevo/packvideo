@@ -46,6 +46,13 @@ export const config = {
     stopPct: int('DISK_STOP_PCT', 90),
   },
 
+  // path ของ ffmpeg — ปกติอยู่บน PATH อยู่แล้ว (Docker) แต่บนเครื่องพัฒนาบางเครื่อง
+  // ตัวที่อยู่บน PATH เป็นบิลด์ย่อที่ไม่มีฟิลเตอร์ drawtext จึงต้องชี้ไปตัวอื่นได้
+  ffmpeg: {
+    bin: str('FFMPEG_PATH', 'ffmpeg'),
+    probe: str('FFPROBE_PATH', 'ffprobe'),
+  },
+
   retentionDays: int('RETENTION_DAYS', 30),
 
   // เพดานความยาวคลิป — ปรับได้ช่วง pilot โดยไม่ต้องแก้โค้ด ดู clips.js §เพดานความปลอดภัย
@@ -74,6 +81,7 @@ const KNOWN_KEYS = new Set([
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
   'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
+  'FFMPEG_PATH', 'FFPROBE_PATH',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
 ]);
 

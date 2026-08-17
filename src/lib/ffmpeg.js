@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { log } from '../log.js';
+import { config } from '../config.js';
 
 const run = promisify(execFile);
 
@@ -25,24 +26,24 @@ export async function probeFfmpeg() {
   };
 
   try {
-    const { stdout } = await run('ffmpeg', ['-hide_banner', '-version'], { timeout: 10_000 });
+    const { stdout } = await run(config.ffmpeg.bin, ['-hide_banner', '-version'], { timeout: 10_000 });
     out.available = true;
     out.version = stdout.split('\n')[0]?.replace(/^ffmpeg version /, '') ?? null;
   } catch {
-    out.reason = 'ไม่พบคำสั่ง ffmpeg';
+    out.reason = `ไม่พบคำสั่ง ffmpeg ที่ ${config.ffmpeg.bin}`;
     caps = out;
     return out;
   }
 
   try {
-    const { stdout } = await run('ffmpeg', ['-hide_banner', '-encoders'], { timeout: 10_000 });
+    const { stdout } = await run(config.ffmpeg.bin, ['-hide_banner', '-encoders'], { timeout: 10_000 });
     out.libx264 = /\blibx264\b/.test(stdout);
   } catch { /* ปล่อยเป็น false */ }
 
   // เชื่อการทดลองใช้จริง ไม่เชื่อรายการฟิลเตอร์ — บางบิลด์ประกาศไว้แต่ใช้ไม่ได้
   try {
     await run(
-      'ffmpeg',
+      config.ffmpeg.bin,
       ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=64x64:d=0.1',
        '-vf', "drawtext=text='0':fontcolor=white:fontsize=12", '-frames:v', '1', '-f', 'null', '-'],
       { timeout: 10_000 },
@@ -71,7 +72,7 @@ export function ffmpegCaps() {
 }
 
 export async function ffmpeg(args, { timeout = 120_000 } = {}) {
-  return run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], {
+  return run(config.ffmpeg.bin, ['-hide_banner', '-loglevel', 'error', '-y', ...args], {
     timeout,
     maxBuffer: 8 * 1024 * 1024,
   });
@@ -80,7 +81,7 @@ export async function ffmpeg(args, { timeout = 120_000 } = {}) {
 export async function ffprobeDuration(file) {
   try {
     const { stdout } = await run(
-      'ffprobe',
+      config.ffmpeg.probe,
       ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
       { timeout: 20_000 },
     );
