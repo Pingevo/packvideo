@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>คู่มือใช้งาน — packvideo</title>
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.28); --accent: #2563eb;
+          --warn: #9a6700; --bad: #b62324; --ok: #1a7f37; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; line-height: 1.65; }
+  header { padding: 16px 20px 0; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+           background: Canvas; z-index: 10; }
+  h1 { font-size: 17px; margin: 0 0 12px; }
+  h1 small { font-weight: 400; opacity: .55; font-size: 13px; margin-left: 8px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { font: inherit; font-weight: 600; padding: 9px 15px; cursor: pointer; color: inherit;
+               background: transparent; border: 0; border-bottom: 3px solid transparent; }
+  nav button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); }
+  main { padding: 24px 20px 64px; max-width: 780px; }
+  section[hidden] { display: none; }
+  h2 { font-size: 15px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h2:first-of-type { margin-top: 0; }
+  h3 { font-size: 14px; margin: 22px 0 6px; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+  code, kbd { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+              background: rgba(128,128,128,.14); padding: 1px 6px; border-radius: 5px; }
+  a { color: var(--accent); }
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 14px 0; }
+  .steps li { counter-increment: s; position: relative; padding: 10px 0 10px 44px;
+              border-bottom: 1px solid var(--line); }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: 10px;
+              width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff;
+              display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+  .steps li b { display: block; }
+  .steps li span { opacity: .65; font-size: 13px; }
+  .note { border-left: 3px solid var(--accent); padding: 10px 14px; margin: 14px 0;
+          background: rgba(37,99,235,.07); border-radius: 0 8px 8px 0; font-size: 14px; }
+  .note.warn { border-left-color: var(--warn); background: rgba(154,103,0,.09); }
+  .note.bad  { border-left-color: var(--bad);  background: rgba(182,35,36,.09); }
+  .bar { background: #b3261e; color: #fff; border-radius: 8px; padding: 10px 14px; margin: 12px 0;
+         display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+  .bar .no { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 17px;
+             background: #fff; color: #b3261e; padding: 1px 10px; border-radius: 5px; }
+  .bar .dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; display: inline-block; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 20px; font-size: 12px; font-weight: 700;
+          font-family: ui-monospace, Menlo, monospace; }
+  .pill.verified { background: rgba(26,127,55,.18); color: var(--ok); }
+  .pill.manual_stop { background: rgba(37,99,235,.18); color: var(--accent); }
+  .pill.unverified, .pill.timeout { background: rgba(154,103,0,.2); color: var(--warn); }
+  .go { display: inline-block; margin: 4px 8px 4px 0; padding: 9px 15px; border-radius: 8px;
+        border: 1px solid var(--line); text-decoration: none; font-weight: 600; }
+  .go.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>คู่มือใช้งาน<small>ระบบบันทึกวิดีโอตอนแพ็ค</small></h1>
+  <nav id="tabs">
+    <button data-tab="packer" aria-selected="true">พนักงานแพ็ค</button>
+    <button data-tab="lead" aria-selected="false">หัวหน้าคลัง</button>
+    <button data-tab="cs" aria-selected="false">CS / เคลม</button>
+    <button data-tab="admin" aria-selected="false">ผู้ดูแลระบบ</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ── พนักงานแพ็ค ────────────────────────────────────────── -->
+<section id="packer">
+  <h2>ตอนเริ่มกะ — ทำครั้งเดียว</h2>
+  <p>เปิดหน้าต่างอัดไว้แล้ววางไว้มุมจอ</p>
+  <p><a class="go primary" href="/rec.html" target="_blank">เปิดหน้าต่างอัด</a></p>
+  <div class="note bad"><b>ห้ามปิดหน้าต่างนี้ระหว่างกะ</b> — ปิดเมื่อไรโต๊ะนี้หยุดอัดทันที
+    และคลิปที่กำลังอัดอยู่จะไม่สมบูรณ์</div>
+  <p>เปิดแล้วต้องเห็นภาพจากกล้อง และมุมขวาบนขึ้นว่า <b>พร้อม</b></p>
+
+  <h2>ขั้นตอนแพ็ค</h2>
+  <p>ทำเหมือนเดิมทุกอย่าง <b>เพิ่มแค่ขั้นที่ 4</b> ใช้เวลาประมาณ 2 วินาที</p>
+  <ol class="steps">
+    <li><b>สแกน IMEI</b><span>หน้าต่างอัดขึ้น ● กำลังอัด</span></li>
+    <li><b>หยิบของ ใส่กล่อง ปิดกล่อง</b><span>ช่วงนี้คือหลักฐาน</span></li>
+    <li><b>แปะใบปะหน้า</b></li>
+    <li><b>ยิงบาร์โค้ดเลขพัสดุบนกล่อง</b><span>ที่ช่องเดิมที่ใช้สแกน IMEI → หน้าต่างอัดกลับเป็น พร้อม ✅</span></li>
+  </ol>
+
+  <h2>ไม่ต้องจำว่าตอนไหนต้องยิงอะไร</h2>
+  <p>หลังพิมพ์ใบปะหน้าเสร็จแล้วหน้าเด้งกลับมา จะมีแถบแบบนี้ขึ้นบนสุด:</p>
+  <div class="bar">
+    <span><span class="dot"></span> กำลังอัดวิดีโอ</span>
+    <span>ยิงบาร์โค้ด<u>เลขพัสดุบนกล่อง</u>เพื่อปิดคลิป</span>
+    <span class="no">TH266925364939T</span>
+    <span style="margin-left:auto;font-size:12px;opacity:.9">เลิกรอใน 8:26</span>
+  </div>
+  <p>ตอนนั้นช่องกรอกจะเปลี่ยนป้ายจาก <b>Imei</b> เป็น <b>เลขพัสดุ</b> และขอบช่องเป็นสีแดง
+     — ยิงบาร์โค้ดบนกล่องได้เลย ไม่ต้องเทียบเลขเอง</p>
+  <p><b>แถบหายเมื่อไหร่ = ปิดคลิปเรียบร้อย</b> หน้าจอกลับเป็นแบบเดิม พร้อมรับ IMEI ตัวถัดไป</p>
+  <div class="note warn">ถ้านับถอยหลังจนหมด (10 นาที) ระบบจะเลิกรอ — ยิงบาร์โค้ดกล่องแล้วจะไม่ปิดคลิปให้
+    ต้องกด <b>ปิดคลิปเอง</b> ที่หน้าต่างอัดแทน</div>
+
+  <h2>ความหมายของสิ่งที่เห็น</h2>
+  <table>
+    <tr><th>เห็นอะไร</th><th>แปลว่า</th><th>ต้องทำอะไร</th></tr>
+    <tr><td><b>พร้อม</b></td><td>ว่าง รอสแกนออเดอร์ถัดไป</td><td>—</td></tr>
+    <tr><td><b>● กำลังอัด</b></td><td>กำลังบันทึกอยู่</td><td>แพ็คตามปกติ</td></tr>
+    <tr><td>🔴 <b>ใบปะหน้าไม่ตรงกับออเดอร์</b> + เสียง</td><td><b>แปะใบปะหน้าผิดกล่อง</b></td>
+        <td>หยุด ตรวจว่ากล่องนี้ควรเป็นออเดอร์ไหน</td></tr>
+    <tr><td><b>ดิสก์เต็ม — หยุดบันทึกชั่วคราว</b></td><td>ที่เก็บเต็ม</td><td>แพ็คต่อได้ตามปกติ แจ้งหัวหน้า</td></tr>
+    <tr><td><b>กล้องหลุด</b></td><td>สาย USB หลุด</td><td>เสียบใหม่แล้วรีเฟรชหน้านั้น</td></tr>
+    <tr><td><b>คิว</b> มีตัวเลขค้างนานๆ</td><td>เน็ตมีปัญหา</td><td>แพ็คต่อได้ คลิปไม่หาย แจ้งหัวหน้า</td></tr>
+  </table>
+
+  <h2>สแกนบาร์โค้ดไม่ติด</h2>
+  <p>ใบปะหน้าบางใบพิมพ์ไม่ชัด สแกนยังไงก็ไม่เข้า → กด <b>ปิดคลิปเอง</b> ค้างไว้ 1 วินาที</p>
+  <p>ปุ่มนี้ต้องกดค้างเพื่อกันกดโดนตอนหยิบของ · ใช้บ่อยๆ ได้ไม่ผิด
+     แต่ถ้าเจอทุกวันให้แจ้งหัวหน้า เพราะเป็นปัญหาที่เครื่องพิมพ์ ไม่ใช่ที่ระบบ</p>
+
+  <h2>สิ่งที่ควรรู้</h2>
+  <ul>
+    <li><b>ไม่มีการบันทึกเสียง</b> ทุกกรณี และไม่มีปุ่มให้เปิด</li>
+    <li>กล้องจับพื้นที่โต๊ะเป็นหลัก ไม่ได้เล็งใบหน้า</li>
+    <li>คลิปเก็บไว้ 30 วันแล้วลบอัตโนมัติ ยกเว้นออเดอร์ที่มีเคส</li>
+    <li><b>ระบบวิดีโอล่มไม่กระทบการแพ็ค</b> — สแกนและพิมพ์ใบปะหน้าได้ตามปกติเสมอ</li>
+  </ul>
+</section>
+
+<!-- ── หัวหน้าคลัง ────────────────────────────────────────── -->
+<section id="lead" hidden>
+  <h2>หน้าที่ใช้</h2>
+  <p><a class="go primary" href="/monitor.html" target="_blank">เปิดหน้าสถานะระบบ</a></p>
+  <p>รีเฟรชเองทุก 10 วินาที เปิดค้างไว้บนจอได้ทั้งวัน</p>
+
+  <h2>ดูอะไร</h2>
+  <table>
+    <tr><th>การ์ด</th><th>ปกติควรเป็น</th><th>ถ้าผิดปกติ</th></tr>
+    <tr><td><b>คลิปต่อใบปะหน้า</b></td><td>≥ 95%</td><td>มีการแพ็คที่ไม่ได้อัด — ดูตารางว่าโต๊ะไหน</td></tr>
+    <tr><td><b>โต๊ะที่ต่ออยู่</b></td><td>ครบทุกโต๊ะที่ทำงาน</td><td>โต๊ะที่หายไปไม่ได้อัด ให้ไปเปิดหน้าต่างอัด</td></tr>
+    <tr><td><b>ดิสก์</b></td><td>&lt; 75%</td><td>ถึง 90% ระบบหยุดอัดเอง แจ้ง IT</td></tr>
+    <tr><td><b>บันทึกได้ไหม</b></td><td>ได้</td><td>ไม่ได้ = ดิสก์เต็มหรือเขียนไม่ได้</td></tr>
+  </table>
+
+  <div class="note bad"><b>แถวสีแดงในตาราง = โต๊ะนั้นกำลังแพ็คของอยู่แต่ไม่ได้อัด</b><br>
+    เป็นเคสที่ต้องรีบที่สุด ไปดูที่โต๊ะเลย สาเหตุที่พบบ่อยคือพนักงานเผลอปิดหน้าต่างอัด</div>
+
+  <h2>ตัวเลขที่ใช้คุยกับทีม</h2>
+  <table>
+    <tr><th>ตัวเลข</th><th>บอกอะไร</th></tr>
+    <tr><td><b>อัตรา</b> รายโต๊ะ</td><td>โต๊ะไหนแพ็คโดยไม่ได้อัดบ่อย</td></tr>
+    <tr><td>จำนวน <b>เตือนใบปะหน้าผิด</b></td><td>คนไหนแปะผิดบ่อย — เป็นเรื่องที่ต้องคุย ไม่ใช่แก้โปรแกรม</td></tr>
+    <tr><td>สัดส่วน <b>ปิดคลิปเอง</b></td><td>สูง = เครื่องพิมพ์ใบปะหน้ามีปัญหา ไม่ใช่วินัยพนักงาน</td></tr>
+  </table>
+  <div class="note">ตัวเลขเหล่านี้มีไว้คุยเรื่องขั้นตอนหน้างาน <b>ไม่ใช่ตัวชี้วัดผลงานรายคน</b>
+    — วัตถุประสงค์ที่แจ้ง PDPA ไว้คือการเก็บหลักฐาน</div>
+</section>
+
+<!-- ── CS / เคลม ──────────────────────────────────────────── -->
+<section id="cs" hidden>
+  <h2>ทุกอย่างอยู่ในหน้าเดียว</h2>
+  <p><a class="go primary" href="/clips.html" target="_blank">เปิดหน้าค้นหาคลิป</a></p>
+  <p>ค้นหา · ดูวิดีโอ · ดาวน์โหลดไฟล์ส่งแพลตฟอร์ม · ดึงรูปนิ่ง · ส่งลิงก์ให้ขนส่ง · ตรึงคลิปไม่ให้ถูกลบ</p>
+  <p>เปิดตรงไปที่ออเดอร์ได้เลย: <code>/clips.html?q=250811ABC123</code></p>
+
+  <h2>ค้นหา</h2>
+  <p>วางเลขอะไรก็ได้ลงในช่องเดียว — <b>เลขออเดอร์ เลขพัสดุ หรือ IMEI</b> ระบบแยกให้เอง
+     มีขีดคั่นหรือช่องว่างติดมาก็ได้ ตัดให้เอง</p>
+  <p>กรองเพิ่มได้ที่แถบด้านบน: สถานะ · ช่วงวันที่ · เฉพาะที่ตรึงไว้</p>
+  <div class="note">ครั้งแรกที่กดปุ่มที่บันทึกประวัติ ระบบจะถามชื่อคุณครั้งเดียวแล้วจำไว้
+    เพื่อบันทึกว่าใครดาวน์โหลด ใครส่งลิงก์ ใครตรึงหรือถอนตรึง</div>
+
+  <h2>สถานะของคลิปบอกอะไร</h2>
+  <table>
+    <tr><th>สถานะ</th><th>ความหมาย</th></tr>
+    <tr><td><span class="pill verified">verified</span></td>
+        <td>✅ สมบูรณ์ที่สุด — มีภาพเลขพัสดุในคลิป ใช้สู้เคสได้เต็มที่</td></tr>
+    <tr><td><span class="pill manual_stop">manual_stop</span></td>
+        <td>พนักงานปิดเอง (บาร์โค้ดสแกนไม่ติด) คลิปยังใช้ได้</td></tr>
+    <tr><td><span class="pill unverified">unverified</span></td>
+        <td>ไม่ได้ปิดตามขั้นตอน อาจไม่มีภาพเลขพัสดุ</td></tr>
+    <tr><td><span class="pill timeout">timeout</span></td>
+        <td>ไม่มีความเคลื่อนไหวจนระบบปิดเอง</td></tr>
+  </table>
+  <p>ถ้าขึ้นว่าไม่มีไฟล์วิดีโอแล้ว แต่มีวันที่ลบกำกับ แปลว่า <b>เคยมีแต่ถูกลบตามกำหนด 30 วัน</b> ไม่ใช่ระบบพัง</p>
+
+  <h2>ส่งหลักฐานเข้าแพลตฟอร์ม</h2>
+  <div class="note warn">แพลตฟอร์มรับวิดีโอ <b>≤ 60 วินาที และ ≤ 30 MB</b> เท่านั้น และ <b>ส่งผ่าน API ไม่ได้</b>
+    ต้องดาวน์โหลดแล้วอัปเข้า Seller Center เอง</div>
+  <p>กดปุ่มส่งออกในหน้าคลิป จะได้ไฟล์ที่:</p>
+  <ul>
+    <li>ตัดมาแล้ว ≤ 60 วินาที ช่วงที่ครอบคลุมตอนปิดกล่องและเลขพัสดุ</li>
+    <li><b>มีวันเวลา + เลขออเดอร์ + เลขพัสดุ เบิร์นติดในภาพ</b></li>
+    <li>ไม่มีเสียง</li>
+  </ul>
+  <div class="note">ระบบให้เลือกได้แค่ <b>ช่วงเดียวต่อเนื่อง</b> โดยตั้งใจ
+    — หลักฐานที่ตัดต่อจากหลายช่วงเสียน้ำหนักทันที ระบบจึงไม่เปิดช่องให้ทำ</div>
+
+  <h3>เมื่อแพลตฟอร์มขอเป็นรูป</h3>
+  <p>TikTok บางเคสบังคับขอหลักฐานการแพ็คเป็นรูปนิ่ง → ดึงรูปได้สูงสุด 6 รูป
+     มีวันเวลาเบิร์นเหมือนวิดีโอ · Lazada เคสคืนเงินต้องมีรูปปกคู่กับวิดีโอ</p>
+
+  <h2>ส่งลิงก์ให้ลูกค้า / ขนส่ง</h2>
+  <p>ลิงก์ที่ได้เปิดดูได้เลยบนมือถือ ไม่ต้องล็อกอิน · หมดอายุตามที่ตั้ง (ปริยาย 7 วัน สูงสุด 90)
+     · ดูได้เฉพาะคลิปนั้นคลิปเดียว · นับได้ว่าถูกเปิดกี่ครั้ง เมื่อไร</p>
+  <div class="note warn">ลิงก์นี้ทำให้ข้อมูลออกนอกองค์กร — ตั้งอายุให้สั้นที่สุดเท่าที่พอใช้งาน
+    และยกเลิกเมื่อจบเรื่อง ยกเลิกแล้วคนที่เปิดค้างไว้ก็ดูต่อไม่ได้ทันที</div>
+
+  <h2>กันคลิปไม่ให้ถูกลบ</h2>
+  <p>คลิปทั่วไปถูกลบเมื่อครบ 30 วัน <b>ถ้าเคสยังไม่จบให้ตรึงไว้</b></p>
+  <p>ระบบตรึงให้อัตโนมัติอยู่แล้วเมื่อ: เปิดเคสของออเดอร์นั้น · คลิปปิดแบบ
+    <span class="pill unverified">unverified</span> หรือ <span class="pill timeout">timeout</span>
+    · เคยเตือนใบปะหน้าไม่ตรง</p>
+  <div class="note bad"><b>ตรึงด้วยมือเมื่อเคสมาทางแชทหรืออีเมลก่อนเปิดเคสในระบบ — อย่ารอ</b>
+    เพราะพอครบ 30 วันแล้วไม่มีอะไรกู้คืนได้</div>
+</section>
+
+<!-- ── ผู้ดูแลระบบ ────────────────────────────────────────── -->
+<section id="admin" hidden>
+  <h2>ตรวจสุขภาพ</h2>
+  <p><a class="go" href="/api/health" target="_blank">ดู /api/health</a>
+     <a class="go" href="/monitor.html" target="_blank">หน้าสถานะระบบ</a></p>
+  <p>ตอบ <code>200</code> เมื่อปกติ · <code>503</code> เมื่อ Mongo ต่อไม่ได้หรือเขียนดิสก์ไม่ได้<br>
+     ดู <code>mongo</code> · <code>storage</code> (พื้นที่ ระดับ เขียนได้ไหม) · <code>ffmpeg</code> (ส่งออกหลักฐานได้ไหม)</p>
+  <p><code>BASE=https://pack.digital.in.th npm run smoke</code> — ต้องได้ 9/9</p>
+
+  <h2>การแจ้งเตือนที่จะได้รับ</h2>
+  <table>
+    <tr><th>เตือนว่า</th><th>ควรทำ</th></tr>
+    <tr><td>อัตราคลิปต่อใบปะหน้าต่ำ</td><td>บอกหัวหน้าคลัง ดูว่าโต๊ะไหน</td></tr>
+    <tr><td>โต๊ะพิมพ์ใบปะหน้าแต่ไม่มีเครื่องต่อ</td><td><b>เร่งด่วน</b> ไปเปิดหน้าต่างอัดที่โต๊ะนั้น</td></tr>
+    <tr><td>ไม่ได้รับสัญญาณเลยเกิน 15 นาที</td><td><code>hook.js</code> อาจพัง — เช็คว่า script tag ยังอยู่ในหน้าแพ็ค</td></tr>
+    <tr><td>ดิสก์ 75% / 85% / 90%</td><td>ที่ 90% ระบบหยุดอัดเอง งานแพ็คยังเดินต่อ</td></tr>
+    <tr><td>ต่อฐานข้อมูลไม่ได้</td><td>ระบบยังรับสัญญาณแต่ไม่อัด</td></tr>
+  </table>
+  <p>เรื่องเดิมเตือนซ้ำได้ทุก 30 นาที ไม่สแปม</p>
+
+  <h2>แก้ปัญหาที่พบบ่อย</h2>
+  <table>
+    <tr><th>อาการ</th><th>สาเหตุที่พบบ่อย</th></tr>
+    <tr><td>หน้าต่างอัดขึ้น "ขาดการเชื่อมต่อ" ตลอด</td><td>nginx ไม่ได้ตั้ง <code>proxy_buffering off</code> ที่ <code>/api/stream/</code></td></tr>
+    <tr><td>ตัวอัดหลุดทุก 60 วินาที</td><td><code>proxy_read_timeout</code> สั้นไป ตั้งเป็น <code>1h</code></td></tr>
+    <tr><td>ใบปะหน้าเพิ่มแต่คลิปไม่เพิ่ม</td><td>หน้าต่างอัดไม่ได้เปิด หรือกล้องเปิดไม่ได้</td></tr>
+    <tr><td>ไม่มีสัญญาณเข้ามาเลย</td><td>script tag หาย หรือ <code>ALLOWED_ORIGINS</code> ผิด</td></tr>
+    <tr><td>ส่งออกหลักฐานไม่ได้</td><td><code>ffmpeg</code> ไม่มี <code>drawtext</code> — ดู <code>/api/health</code></td></tr>
+    <tr><td>เลื่อนดูกลางคลิปไม่ได้</td><td>nginx ไม่ส่ง <code>Range</code> ผ่าน</td></tr>
+    <tr><td>คลิปไม่ขึ้นทันทีหลังสแกน</td><td>ปกติ — คลิปปรากฏหลังปิดแล้ว</td></tr>
+  </table>
+
+  <h2>สวิตช์ที่ใช้ได้ทันทีหน้างาน</h2>
+  <p>วางใน Console ของหน้าแพ็ค แล้วรีเฟรช — ไม่ต้อง deploy อะไรเลย</p>
+  <table>
+    <tr><th>ต้องการ</th><th>คำสั่ง</th></tr>
+    <tr><td>หยุดไม่ให้ hook ดักการสแกน</td><td><code>localStorage.setItem('packvideo.intercept','off')</code></td></tr>
+    <tr><td>ซ่อนแถบแดงบอกให้ยิงเลขพัสดุ</td><td><code>localStorage.setItem('packvideo.ui','off')</code></td></tr>
+    <tr><td>ดูว่า hook ตัดสินใจอะไร</td><td><code>localStorage.setItem('packvideo.debug','1')</code></td></tr>
+  </table>
+
+  <h2>สำรองข้อมูล</h2>
+  <p><b>คลิปทั่วไปไม่ต้องสำรอง</b> — เป็นข้อมูลชั่วคราว 30 วัน HDD พังยอมรับได้</p>
+  <p><b><code>_pinned/</code> ต้องสำรอง</b> — คือหลักฐานของเคสที่กำลังสู้เงินอยู่ และเล็กมาก
+     ตั้ง cron ทุกคืน และ <b>ทดสอบกู้คืนจริงอย่างน้อย 1 ครั้ง</b> ก่อนเชื่อว่าใช้ได้</p>
+</section>
+
+</main>
+
+<script>
+  (function () {
+    var tabs = document.getElementById('tabs');
+    var ids = ['packer', 'lead', 'cs', 'admin'];
+
+    /**
+     * hash เป็น `#tab-cs` ไม่ใช่ `#cs` โดยตั้งใจ — ต้องไม่ตรงกับ id ของ section ไหนเลย
+     *
+     * ถ้าตรง เบราว์เซอร์จะกระโดดไปหา element นั้นเอง แล้วหัวข้อแรกของแท็บ
+     * ไปนอนอยู่ใต้หัวเพจแบบ sticky พอดี มองไม่เห็น · การสั่ง scrollTo(0,0)
+     * แข่งกับมันไม่ชนะ (ลองทั้งตรงๆ และใน requestAnimationFrame แล้ว)
+     * ไม่ให้มีอะไรตรงกับ hash เลยจึงเป็นทางเดียวที่แน่นอน
+     */
+    function show(name) {
+      if (ids.indexOf(name) === -1) name = 'packer';
+      ids.forEach(function (id) { document.getElementById(id).hidden = (id !== name); });
+      [].forEach.call(tabs.children, function (b) {
+        b.setAttribute('aria-selected', String(b.dataset.tab === name));
+      });
+      window.scrollTo(0, 0);
+    }
+
+    /** รับได้ทั้ง `#tab-cs` และ `#cs` เผื่อมีคนคัดลอกลิงก์แบบเก่าไปแล้ว */
+    function fromHash() {
+      return location.hash.replace(/^#(tab-)?/, '');
+    }
+
+    tabs.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      location.hash = 'tab-' + b.dataset.tab;   // แชร์ลิงก์ตรงไปหัวข้อของแต่ละคนได้
+    });
+
+    window.addEventListener('hashchange', function () { show(fromHash()); });
+    show(fromHash());
+  })();
+</script>
+
+</body>
+</html>
