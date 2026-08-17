@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 
 /**
@@ -27,6 +28,24 @@ export function setSimulatedUsage(pct) {
   if (config.env === 'production') return false;
   simulatedPct = pct === null ? null : Number(pct);
   return true;
+}
+
+/**
+ * เตือนถ้าที่เก็บคลิปอยู่ในโฟลเดอร์โปรเจกต์
+ *
+ * เคยเกิดจริง: `PACK_VIDEO_PATH=./data/pack_video` บนเครื่องพัฒนา แล้วคลิปที่อัดจริง
+ * ถูกลบทิ้งตอนเก็บกวาดหลังทดสอบ เพราะโฟลเดอร์ในโปรเจกต์ถูกปฏิบัติเหมือนพื้นที่ชั่วคราว
+ *
+ * ที่เก็บหลักฐานต้องอยู่นอกที่ที่ใครก็ลบได้โดยไม่คิด
+ */
+export function storagePathWarning() {
+  const root = path.resolve(config.storage.path);
+  const repo = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
+  if (root === repo || root.startsWith(repo + path.sep)) {
+    return `ที่เก็บคลิปอยู่ในโฟลเดอร์โปรเจกต์ (${root}) — ย้ายออกไปข้างนอก ` +
+      'ไม่งั้นเสี่ยงถูกลบตอนเก็บกวาดหรือ clean build';
+  }
+  return null;
 }
 
 /** สร้างโฟลเดอร์ที่เก็บถ้ายังไม่มี แล้วคืน path สัมบูรณ์ */

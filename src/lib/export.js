@@ -50,16 +50,25 @@ function drawtext(text, y, fontSize) {
   ].join(':');
 }
 
+/**
+ * วันเวลาที่จะเบิร์นลงภาพ
+ *
+ * **ต้องเป็นอักขระ ASCII ล้วน** — ฟอนต์ปริยายที่ ffmpeg หยิบมาใช้ไม่มีอักษรไทย
+ * ตัวอักษรไทยจะกลายเป็นกล่องว่าง □ ซึ่งบนหลักฐานที่ส่งให้แพลตฟอร์มดูแย่มาก
+ * (เจอจริงตอนทดสอบ: "น." ออกมาเป็น "□.")
+ *
+ * ใช้ปี ค.ศ. เพราะเจ้าหน้าที่แพลตฟอร์มอ่านได้ทุกชาติ และเขียน +07 กำกับไว้
+ * ให้ชัดว่าเป็นเวลาไทย ไม่ต้องเดาว่าเป็น timezone ไหน
+ */
 function fmtWhen(date) {
-  // เขียนเป็นเวลาไทยแบบเต็ม ให้เจ้าหน้าที่แพลตฟอร์มอ่านได้โดยไม่ต้องแปลง timezone
-  const p = new Intl.DateTimeFormat('th-TH', {
+  const p = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Bangkok',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   }).formatToParts(date);
   const g = (t) => p.find((x) => x.type === t)?.value ?? '';
-  return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}:${g('second')} น.`;
+  return `${g('day')}/${g('month')}/${g('year')} ${g('hour')}:${g('minute')}:${g('second')} +07`;
 }
 
 /**

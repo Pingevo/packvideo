@@ -279,6 +279,14 @@
   // arr_tracking.push(...) ที่ฝังอยู่ inline ไม่ได้ — แต่ตอน DOM พร้อม มันถูกเติมครบแล้วเสมอ
   function readTracking() {
     try {
+      // 1) ป้ายที่ระบุไว้ตรงๆ — หน้าที่ไม่มี arr_tracking หรือบาร์โค้ด svg ใช้ทางนี้
+      //    (`printed` กับ `airways_hot_large` พิมพ์เลขพัสดุเป็นข้อความในตารางเฉยๆ)
+      //    เอาไว้ลำดับแรกเพราะเป็นค่าที่ประกาศไว้ให้เราโดยเฉพาะ ไม่ใช่การเดาจากโครงหน้า
+      var marks = document.querySelectorAll('[data-packvideo-tracking]');
+      if (marks.length) {
+        var v = (marks[marks.length - 1].getAttribute('data-packvideo-tracking') || '').trim();
+        if (v) return v;
+      }
       var list = window.arr_tracking;
       if (list && list.length) {
         return String(list[list.length - 1]).trim() || null;
@@ -306,7 +314,11 @@
 
   function isLabelPage() {
     try {
-      return !!(window.arr_tracking || document.querySelector('[id^="svg_"]'));
+      return !!(
+        document.querySelector('[data-packvideo-tracking]') ||
+        window.arr_tracking ||
+        document.querySelector('[id^="svg_"]')
+      );
     } catch (e) { return false; }
   }
 

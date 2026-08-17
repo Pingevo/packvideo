@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ค้นหาคลิป — packvideo</title>
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.28); --accent: #2563eb; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+         margin: 0; padding: 0; line-height: 1.5; }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+           background: Canvas; z-index: 10; }
+  h1 { font-size: 17px; margin: 0 0 12px; }
+  .search { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=text], input[type=date], select {
+    font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line);
+    background: transparent; color: inherit; }
+  #q { flex: 1; min-width: 240px; font-size: 15px; }
+  button { font: inherit; padding: 9px 15px; border-radius: 8px; cursor: pointer; font-weight: 600;
+           border: 1px solid var(--line); background: transparent; color: inherit; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; align-items: center; }
+  .filters label { opacity: .6; }
+  main { display: grid; grid-template-columns: minmax(320px, 460px) 1fr; gap: 0; min-height: calc(100vh - 120px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .list { border-right: 1px solid var(--line); overflow-y: auto; max-height: calc(100vh - 120px); }
+  .row { padding: 12px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .row:hover { background: rgba(128,128,128,.07); }
+  .row[aria-selected="true"] { background: rgba(37,99,235,.12); box-shadow: inset 3px 0 0 var(--accent); }
+  .row .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .row .ord { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 14px; }
+  .row .meta { font-size: 12px; opacity: .65; margin-top: 3px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .pill.verified   { background: rgba(26,127,55,.18);  color: #1a7f37; }
+  .pill.manual_stop{ background: rgba(37,99,235,.18);  color: #2563eb; }
+  .pill.unverified { background: rgba(154,103,0,.2);   color: #9a6700; }
+  .pill.timeout    { background: rgba(154,103,0,.2);   color: #9a6700; }
+  .pill.aborted    { background: rgba(128,128,128,.2); }
+  .detail { padding: 20px; overflow-y: auto; max-height: calc(100vh - 120px); }
+  video { width: 100%; max-width: 720px; border-radius: 10px; background: #000; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; font-size: 13px; margin: 16px 0 0;
+       max-width: 720px; }
+  dt { opacity: .55; } dd { margin: 0; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .55;
+       margin: 24px 0 10px; font-weight: 700; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .timeline { font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .timeline div { padding: 3px 0; border-bottom: 1px solid rgba(128,128,128,.12); }
+  .empty { padding: 40px 20px; text-align: center; opacity: .55; font-size: 14px; }
+  .msg { padding: 11px 14px; border-radius: 8px; margin-top: 12px; font-size: 13px; display: none;
+         max-width: 720px; }
+  .msg.ok  { background: rgba(26,127,55,.12); border: 1px solid rgba(26,127,55,.4); display: block; }
+  .msg.bad { background: rgba(182,35,36,.12); border: 1px solid rgba(182,35,36,.4); display: block; }
+  .msg a { color: inherit; }
+  .gone { background: rgba(154,103,0,.12); border: 1px solid rgba(154,103,0,.4);
+          padding: 14px; border-radius: 8px; max-width: 720px; font-size: 14px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ค้นหาคลิปการแพ็ค</h1>
+  <div class="search">
+    <input type="text" id="q" placeholder="วางเลขออเดอร์ เลขพัสดุ หรือ IMEI — วางอันไหนก็ได้" autofocus>
+    <button class="primary" id="go">ค้นหา</button>
+  </div>
+  <div class="filters">
+    <label>สถานะ</label>
+    <select id="status">
+      <option value="">ทั้งหมด</option>
+      <option value="verified">verified</option>
+      <option value="manual_stop">manual_stop</option>
+      <option value="unverified">unverified</option>
+      <option value="timeout">timeout</option>
+    </select>
+    <label>ตั้งแต่</label><input type="date" id="from">
+    <label>ถึง</label><input type="date" id="to">
+    <label><input type="checkbox" id="pinned"> เฉพาะที่ตรึงไว้</label>
+    <span id="count" style="margin-left:auto; opacity:.6"></span>
+  </div>
+</header>
+
+<main>
+  <div class="list" id="list"><div class="empty">พิมพ์เลขแล้วกดค้นหา</div></div>
+  <div class="detail" id="detail"><div class="empty">เลือกคลิปจากรายการทางซ้าย</div></div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var current = null;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s)
+    .replace(/[&<>"]/g, function (c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+  function dt(s) { return s ? new Date(s).toLocaleString('th-TH') : '—'; }
+  function secs(ms) { return ms == null ? '—' : (ms/1000).toFixed(0) + ' วินาที'; }
+  function mb(b) { return b ? (b/1024/1024).toFixed(2) + ' MB' : '—'; }
+
+  function who() {
+    var v = localStorage.getItem('packvideo.me');
+    if (!v) {
+      v = (prompt('ชื่อคุณ (บันทึกไว้ในประวัติว่าใครทำ)') || '').trim();
+      if (v) localStorage.setItem('packvideo.me', v);
+    }
+    return v || 'ไม่ระบุ';
+  }
+
+  // ── ค้นหา ───────────────────────────────────────────────────
+  function search() {
+    var p = new URLSearchParams();
+    if ($('q').value.trim()) p.set('q', $('q').value.trim());
+    if ($('status').value) p.set('status', $('status').value);
+    if ($('from').value) p.set('from', $('from').value);
+    if ($('to').value) p.set('to', $('to').value);
+    if ($('pinned').checked) p.set('pinned', 'true');
+    p.set('limit', '200');
+
+    $('list').innerHTML = '<div class="empty">กำลังค้นหา…</div>';
+    fetch('/api/search?' + p.toString())
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { $('list').innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+        $('count').textContent = d.count + ' คลิป' + (d.truncated ? ' (แสดงเท่าที่จำกัดไว้)' : '');
+        if (!d.clips.length) {
+          $('list').innerHTML = '<div class="empty">ไม่พบคลิปที่ตรงกับที่ค้น</div>';
+          return;
+        }
+        $('list').innerHTML = d.clips.map(rowHtml).join('');
+        [].forEach.call(document.querySelectorAll('.row'), function (el) {
+          el.onclick = function () { select(el.dataset.id); };
+        });
+      })
+      .catch(function (e) { $('list').innerHTML = '<div class="empty">ค้นหาไม่สำเร็จ: ' + esc(e.message) + '</div>'; });
+  }
+
+  function rowHtml(c) {
+    return '<div class="row" data-id="' + esc(c.clip_id) + '" role="option" aria-selected="false">' +
+      '<div class="top"><span class="ord">' + esc(c.ordersn || '(ไม่มีเลขออเดอร์)') + '</span>' +
+      '<span class="pill ' + esc(c.status) + '">' + esc(c.status) + '</span></div>' +
+      '<div class="meta">' + esc(c.tracking_no || '—') + ' · ' + secs(c.duration_ms) +
+      ' · ' + dt(c.started_at) +
+      (c.pinned ? ' · 📌 ตรึงไว้' : '') +
+      (c.media_available ? '' : ' · <b>ไม่มีวิดีโอแล้ว</b>') +
+      '</div></div>';
+  }
+
+  // ── รายละเอียด ──────────────────────────────────────────────
+  function select(id) {
+    [].forEach.call(document.querySelectorAll('.row'), function (el) {
+      el.setAttribute('aria-selected', String(el.dataset.id === id));
+    });
+    $('detail').innerHTML = '<div class="empty">กำลังโหลด…</div>';
+    fetch('/api/search/' + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { $('detail').innerHTML = '<div class="empty">' + esc(d.error) + '</div>'; return; }
+        current = d.clip;
+        render(d.clip, d.events || []);
+      });
+  }
+
+  function render(c, events) {
+    var player = c.media_available
+      ? '<video controls preload="metadata" playsinline src="' + esc(c.media_url) + '"></video>'
+      // "เคยมี แต่ถูกลบ" ต้องต่างจาก "ไม่พบ" ให้ชัด ไม่งั้นคนเข้าใจผิดว่าระบบพัง
+      : '<div class="gone"><b>ไม่มีไฟล์วิดีโอแล้ว</b><br>' +
+        (c.media_deleted_at
+          ? 'คลิปนี้เคยมีอยู่จริง และถูกลบตามนโยบายเก็บ 30 วัน เมื่อ ' + esc(dt(c.media_deleted_at))
+          : 'คลิปนี้ไม่มีไฟล์บันทึกไว้ อาจเป็นเพราะกล้องไม่ทำงานตอนนั้น') + '</div>';
+
+    $('detail').innerHTML =
+      player +
+      '<dl>' +
+      row('เลขออเดอร์', c.ordersn) + row('เลขพัสดุ', c.tracking_no) +
+      row('IMEI', (c.imeis || []).join(', ')) +
+      row('สถานะ', c.status) + row('โต๊ะ', c.station_id) + row('พนักงาน', c.packer) +
+      row('เริ่มอัด', dt(c.started_at)) + row('ความยาว', secs(c.duration_ms)) +
+      row('ขนาด', mb(c.bytes)) +
+      row('ตรึงไว้', c.pinned ? 'ใช่ (' + (c.pin_reasons || []).join(', ') + ')' : 'ไม่') +
+      (c.flags && c.flags.length ? row('สัญญาณผิดปกติ', c.flags.join(', ')) : '') +
+      row('ค่าตรวจไฟล์', c.checksum) +
+      '</dl>' +
+      (c.media_available ? actionsHtml() : '') +
+      '<div class="msg" id="msg"></div>' +
+      '<h2>เกิดอะไรขึ้นกับคลิปนี้</h2>' +
+      '<div class="timeline">' + events.map(function (e) {
+        return '<div>' + esc(new Date(e.at).toLocaleTimeString('th-TH')) + '  ' +
+          esc(e.event) + (e.actor ? ' · ' + esc(e.actor) : '') +
+          (e.detail && Object.keys(e.detail).length ? '  ' + esc(JSON.stringify(e.detail)) : '') + '</div>';
+      }).join('') + '</div>';
+
+    if (c.media_available) bindActions(c);
+  }
+
+  function row(k, v) {
+    return '<dt>' + esc(k) + '</dt><dd>' + esc(v || '—') + '</dd>';
+  }
+
+  function actionsHtml() {
+    return '<h2>ทำอะไรกับคลิปนี้</h2><div class="actions">' +
+      '<button class="primary" id="btn-export">ดาวน์โหลดไฟล์ส่งแพลตฟอร์ม</button>' +
+      '<button id="btn-frame">ดึงรูปนิ่ง ณ วินาทีที่กำลังดู</button>' +
+      '<button id="btn-share">สร้างลิงก์ส่งให้ขนส่ง/ลูกค้า</button>' +
+      '<button id="btn-pin"></button>' +
+      '</div>';
+  }
+
+  function msg(kind, html) { var el = $('msg'); el.className = 'msg ' + kind; el.innerHTML = html; }
+
+  function bindActions(c) {
+    $('btn-pin').textContent = c.pinned ? 'ถอนการตรึง' : 'ตรึงไว้ไม่ให้ถูกลบ';
+
+    $('btn-export').onclick = function () {
+      var b = this; b.disabled = true; b.textContent = 'กำลังเตรียมไฟล์…';
+      fetch('/api/clips/' + c.clip_id + '/export', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by: who() }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        b.disabled = false; b.textContent = 'ดาวน์โหลดไฟล์ส่งแพลตฟอร์ม';
+        if (!d.ok) { msg('bad', esc(d.error)); return; }
+        msg('ok', '<b>ไฟล์พร้อมแล้ว</b> — ' + d.duration_sec + ' วินาที · ' + d.mb + ' MB' +
+          ' (เพดานแพลตฟอร์ม 60 วินาที / 30 MB)<br>' +
+          '<a href="' + esc(d.download_url) + '" download>กดที่นี่เพื่อดาวน์โหลด</a>' +
+          ' แล้วอัปเข้า Seller Center เอง — ส่งผ่าน API ไม่ได้');
+      }).catch(function (e) { b.disabled = false; msg('bad', esc(e.message)); });
+    };
+
+    $('btn-frame').onclick = function () {
+      var v = document.querySelector('video');
+      var at = Math.round((v && v.currentTime ? v.currentTime : 0) * 1000);
+      window.open('/api/clips/' + c.clip_id + '/frame?at_ms=' + at + '&by=' + encodeURIComponent(who()), '_blank');
+    };
+
+    $('btn-share').onclick = function () {
+      var days = prompt('ลิงก์นี้ให้ใช้ได้กี่วัน (ตั้งให้สั้นที่สุดเท่าที่พอใช้งาน)', '7');
+      if (days === null) return;
+      var note = prompt('บันทึกไว้ว่าส่งให้ใคร ทำไม', '') || '';
+      fetch('/api/clips/' + c.clip_id + '/share', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by: who(), note: note, days: Number(days) || 7 }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) { msg('bad', esc(d.error)); return; }
+        msg('ok', '<b>ลิงก์พร้อมส่ง</b> (หมดอายุ ' + esc(dt(d.expires_at)) + ')<br>' +
+          '<code>' + esc(d.url) + '</code><br>' +
+          '<button id="copy" style="margin-top:8px">คัดลอกลิงก์</button>');
+        var btn = document.getElementById('copy');
+        if (btn) btn.onclick = function () {
+          navigator.clipboard.writeText(d.url); btn.textContent = 'คัดลอกแล้ว';
+        };
+      });
+    };
+
+    $('btn-pin').onclick = function () {
+      var pinning = !c.pinned;
+      var body = { by: who() };
+      if (pinning) body.note = prompt('ตรึงไว้เพราะอะไร (เช่น เคส #12345)', '') || '';
+      else if (!confirm('ถอนการตรึงแล้วคลิปนี้จะถูกลบเมื่อครบกำหนด ยืนยันไหม')) return;
+
+      fetch('/api/clips/' + c.clip_id + '/pin', {
+        method: pinning ? 'POST' : 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) { msg('bad', esc(d.error)); return; }
+        msg('ok', pinning ? 'ตรึงไว้แล้ว — จะไม่ถูกลบตามกำหนด' : 'ถอนการตรึงแล้ว');
+        select(c.clip_id);
+      });
+    };
+  }
+
+  $('go').onclick = search;
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+  ['status','from','to','pinned'].forEach(function (id) { $(id).onchange = search; });
+
+  // เปิดจากหน้าเคสได้เลย: /clips.html?q=<ordersn>
+  var pre = new URLSearchParams(location.search).get('q');
+  if (pre) { $('q').value = pre; search(); }
+})();
+</script>
+
+</body>
+</html>
