@@ -2,7 +2,7 @@ import { createApp } from './app.js';
 import { config, validateConfig, configWarnings } from './config.js';
 import { log } from './log.js';
 import { connect, close as closeDb } from './db.js';
-import { ensureStorage, storageStatus } from './lib/storage.js';
+import { ensureStorage, storageStatus, storagePathWarning } from './lib/storage.js';
 import { startMonitor } from './lib/monitor.js';
 import { startSweeper } from './lib/clips.js';
 import { ensureIndexes } from './lib/schema.js';
@@ -25,6 +25,9 @@ log.info(
   'ที่เก็บคลิปพร้อมใช้งาน',
 );
 if (!disk.writable) log.error({ error: disk.error }, 'ที่เก็บคลิปเขียนไม่ได้');
+
+const pathWarning = storagePathWarning();
+if (pathWarning) log.warn(pathWarning);
 
 // ไม่ await — ต่อ Mongo ไม่ได้ต้องไม่ทำให้บริการไม่ขึ้น (ดูเหตุผลใน db.js)
 connect(async () => {
