@@ -48,6 +48,7 @@
 |---|---|
 | `/rec.html` | พนักงานแพ็ค — เปิดคาไว้ตลอดกะ **ห้ามปิด** |
 | `/setup.html` | ตั้งโต๊ะ ชื่อเครื่อง กล้อง — ครั้งเดียวต่อเครื่อง |
+| `/clips.html` | **ทีม CS/เคลม — ค้นหา ดู ดาวน์โหลด ส่งลิงก์ ตรึงคลิป** |
 | `/monitor.html` | หัวหน้าคลัง — สถานะทุกโต๊ะ |
 | `/s/<token>` | ลูกค้า/แพลตฟอร์ม/ขนส่ง — ดูคลิปผ่านลิงก์ที่หมดอายุได้ |
 | `/hook.js` | สคริปต์ที่หน้าแพ็คของ sellcenter โหลด |
@@ -138,7 +139,7 @@ src/
     share.js       ลิงก์ภายนอก
     retention.js   ลบตามกำหนด
   routes/          health · signal · stations · monitor · clips · search · export · pin · share
-  public/          rec.html · setup.html · monitor.html · hook.js · chunk-queue.js
+  public/          rec.html · setup.html · monitor.html · clips.html · hook.js · chunk-queue.js
   dev/             หน้าจำลอง sellcenter (ไม่ขึ้น production)
 deploy/nginx/      server block สำหรับ nginx ที่มีอยู่แล้ว
 scripts/           ตั้งค่าและทดสอบ
