@@ -66,8 +66,12 @@ df -h /mnt/packvideo && sudo -u '#1000' touch /mnt/packvideo/.probe && sudo rm /
 
 ## 2. ดึงโค้ด
 
+รันเป็น service หนึ่งใน docker compose รวมของเครื่อง (ตัวเดียวกับ sellcenter) ไม่ใช่ compose แยกของตัวเอง
+ต้อง clone ไว้เป็นโฟลเดอร์ย่อยใต้ compose รวมนั้น ให้ตรงกับ `context: ./packvideo` ที่ service `packvideo`
+อ้างถึงใน `docker-compose.yml` รวม:
+
 ```bash
-git clone git@github.com:Pingevo/packvideo.git /opt/packvideo && cd /opt/packvideo
+git clone git@github.com:Pingevo/packvideo.git /home/sys81/new_system/packvideo && cd /home/sys81/new_system/packvideo
 ```
 
 ---
@@ -112,15 +116,19 @@ cp .env.example .env && chmod 600 .env
 
 ## 5. สร้าง image และรัน
 
+**รันคำสั่งจากโฟลเดอร์ compose รวม (`/home/sys81/new_system`) ไม่ใช่โฟลเดอร์นี้** —
+โฟลเดอร์นี้ไม่มี `docker-compose.yml` ของตัวเอง service `packvideo` ถูกประกาศไว้ใน
+compose รวมเพื่อให้อยู่ network เดียวกับ sellcenter (`new_system_default`) โดยตรง
+
 ```bash
-docker compose build
+cd /home/sys81/new_system && docker compose build packvideo
 ```
 
 > การ build จะทดสอบ `ffmpeg` ว่ามีฟิลเตอร์ `drawtext` หรือไม่ **ถ้าไม่มี build จะไม่ผ่าน**
 > เพราะเบิร์นวันเวลาลงภาพไม่ได้ = ส่งหลักฐานให้แพลตฟอร์มไม่ได้
 
 ```bash
-docker compose up -d && docker compose logs -f --tail 40
+docker compose up -d packvideo && docker compose logs -f --tail 40 packvideo
 ```
 
 ควรเห็น: `ที่เก็บคลิปพร้อมใช้งาน` → `packvideo พร้อมรับงาน` → `mongo เชื่อมต่อแล้ว` → `index พร้อมใช้งาน` → `ffmpeg พร้อมส่งออกหลักฐาน`
@@ -223,13 +231,18 @@ grep -rn "pack.digital.in.th/hook.js" views/shopee/pickup/
 ## การอัปเดตภายหลัง
 
 ```bash
-cd /opt/packvideo && git pull && docker compose build && docker compose up -d
+cd /home/sys81/new_system/packvideo && git pull
+cd /home/sys81/new_system && docker compose build packvideo && docker compose up -d packvideo
 ```
+
+> `up -d packvideo` แตะแค่ container นี้ container เดียว **ห้ามรัน `docker compose down` เฉยๆ**
+> ในโฟลเดอร์ compose รวม เพราะจะปิดทุก service ของ sellcenter ไปด้วย
 
 คลิปที่กำลังอัดตอนรีสตาร์ทจะถูกปิดเป็น `unverified` และตรึงไว้อัตโนมัติ — ทำนอกเวลาแพ็คของ
 
 ## ถอนการติดตั้ง
 
 1. เอา `<script>` 2 บรรทัดออกจาก sellcenter แล้ว deploy — **หน้าแพ็คกลับไปเหมือนเดิมทันที**
-2. `docker compose down`
+2. จากโฟลเดอร์ compose รวม (`/home/sys81/new_system`): `docker compose stop packvideo && docker compose rm -f packvideo`
+   (ห้าม `docker compose down` เพราะจะปิด service อื่นของ sellcenter ไปด้วย)
 3. คลิปยังอยู่ที่ `/mnt/packvideo` จนกว่าจะลบเอง
