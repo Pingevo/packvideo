@@ -214,19 +214,46 @@
   function bindActions(c) {
     $('btn-pin').textContent = c.pinned ? 'ถอนการตรึง' : 'ตรึงไว้ไม่ให้ถูกลบ';
 
+    /**
+     * เตรียมไฟล์แล้วบันทึกลงเครื่องในคลิกเดียว
+     *
+     * ไม่ใช้ <a download> ชี้ตรงไปที่ endpoint เพราะถ้าเซิร์ฟเวอร์ตอบ error กลับมา
+     * เบราว์เซอร์จะบันทึกข้อความ error นั้นเป็นไฟล์ .json แทน แล้วผู้ใช้เห็นแค่
+     * "ดาวน์โหลดไม่สำเร็จ" โดยไม่รู้สาเหตุ (เจอจริงตอนคลิปถูกลบไปแล้ว)
+     *
+     * ดึงมาเป็นข้อมูลก่อนแล้วตรวจสถานะ ถึงจะบันทึก — ล้มเหลวเมื่อไรบอกได้ว่าเพราะอะไร
+     */
     $('btn-export').onclick = function () {
-      var b = this; b.disabled = true; b.textContent = 'กำลังเตรียมไฟล์…';
+      var b = this;
+      var reset = function () { b.disabled = false; b.textContent = 'ดาวน์โหลดไฟล์ส่งแพลตฟอร์ม'; };
+      b.disabled = true; b.textContent = 'กำลังเตรียมไฟล์…';
+
       fetch('/api/clips/' + c.clip_id + '/export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ by: who() }),
       }).then(function (r) { return r.json(); }).then(function (d) {
-        b.disabled = false; b.textContent = 'ดาวน์โหลดไฟล์ส่งแพลตฟอร์ม';
-        if (!d.ok) { msg('bad', esc(d.error)); return; }
-        msg('ok', '<b>ไฟล์พร้อมแล้ว</b> — ' + d.duration_sec + ' วินาที · ' + d.mb + ' MB' +
-          ' (เพดานแพลตฟอร์ม 60 วินาที / 30 MB)<br>' +
-          '<a href="' + esc(d.download_url) + '" download>กดที่นี่เพื่อดาวน์โหลด</a>' +
-          ' แล้วอัปเข้า Seller Center เอง — ส่งผ่าน API ไม่ได้');
-      }).catch(function (e) { b.disabled = false; msg('bad', esc(e.message)); });
+        if (!d.ok) { reset(); msg('bad', esc(d.error)); return; }
+
+        b.textContent = 'กำลังดาวน์โหลด…';
+        return fetch(d.download_url).then(function (r) {
+          if (!r.ok) {
+            return r.json().catch(function () { return { error: 'ดาวน์โหลดไม่สำเร็จ (HTTP ' + r.status + ')' }; })
+              .then(function (e) { throw new Error(e.error || 'ดาวน์โหลดไม่สำเร็จ'); });
+          }
+          return r.blob();
+        }).then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = (c.ordersn || c.clip_id) + '.mp4';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+          reset();
+          msg('ok', '<b>บันทึกไฟล์แล้ว</b> — ' + d.duration_sec + ' วินาที · ' + d.mb + ' MB' +
+            ' (เพดานแพลตฟอร์ม 60 วินาที / 30 MB)<br>' +
+            'เอาไฟล์นี้อัปเข้า Seller Center เอง — ส่งผ่าน API ไม่ได้');
+        });
+      }).catch(function (e) { reset(); msg('bad', esc(e.message)); });
     };
 
     $('btn-frame').onclick = function () {
