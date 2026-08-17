@@ -228,22 +228,160 @@
     } catch (e) { swallow(e); }
   }
 
-  function expectedTracking() {
+  var EXPECT_TTL_MS = 10 * 60 * 1000;
+
+  /** ค่าที่รออยู่พร้อมเวลาที่จำไว้ — ใช้ทั้งการดักและการนับเวลาถอยหลังบนหน้าจอ */
+  function expectedInfo() {
     try {
       var raw = localStorage.getItem('packvideo.expect');
       if (!raw) return null;
       var o = JSON.parse(raw);
       // เกิน 10 นาทีถือว่าเลิกรอ — กันค้างข้ามกะแล้วไปดักค่าของออเดอร์อื่น
-      if (!o || !o.v || Date.now() - o.at > 10 * 60 * 1000) {
+      if (!o || !o.v || Date.now() - o.at > EXPECT_TTL_MS) {
         localStorage.removeItem('packvideo.expect');
         return null;
       }
-      return o.v;
+      return o;
     } catch (e) { return null; }
+  }
+
+  function expectedTracking() {
+    var o = expectedInfo();
+    return o ? o.v : null;
   }
 
   function clearExpected() {
     try { localStorage.removeItem('packvideo.expect'); } catch (e) {}
+    syncUi();
+  }
+
+  // ── หน้าจอตอนรอสแกนปิดคลิป ──────────────────────────────────
+  /**
+   * หลังกลับจากหน้าใบปะหน้า ช่องสแกนต้องการ **เลขพัสดุ** ไม่ใช่ IMEI
+   * แต่หน้าเดิมยังเขียนว่า "Imei" เหมือนเดิมทุกอย่าง — พนักงานไม่มีทางรู้
+   * ว่าจังหวะนี้ต้องยิงอะไร นอกจากจำเอาเอง
+   *
+   * แถบนี้จึงขึ้นเฉพาะช่วงที่กำลังรอเลขพัสดุ และหายไปเองเมื่อปิดคลิปสำเร็จ
+   * หรือเมื่อเลิกรอตามกำหนด 10 นาที
+   *
+   * **ทุกอย่างเป็นการเพิ่มเข้าไป ไม่ลบไม่ทับของเดิม** ค่าที่แก้ (ข้อความป้าย
+   * placeholder padding ของ body) ถูกจำค่าเดิมไว้แล้วคืนให้ครบเมื่อเลิกรอ
+   *
+   *   ปิดแถบนี้:  localStorage.setItem('packvideo.ui','off')   แล้วรีเฟรช
+   */
+  var UI_ENABLED = readFlag('packvideo.ui') !== 'off';
+  var BAR_ID = 'packvideo-waiting-bar';
+  var saved = null;          // ค่าเดิมของหน้าที่เราไปแก้ ไว้คืนตอนเลิกรอ
+  var uiTimer = null;
+
+  function inputEl() {
+    try { return document.getElementById('txt_imei'); } catch (e) { return null; }
+  }
+
+  function ensureStyle() {
+    if (document.getElementById('packvideo-style')) return;
+    var s = document.createElement('style');
+    s.id = 'packvideo-style';
+    s.textContent =
+      '#' + BAR_ID + '{position:fixed;top:0;left:0;right:0;z-index:2147483000;' +
+      'background:#b3261e;color:#fff;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;' +
+      'padding:10px 16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
+      '#' + BAR_ID + ' .pv-rec{font-weight:700;font-size:15px;white-space:nowrap}' +
+      '#' + BAR_ID + ' .pv-dot{display:inline-block;width:11px;height:11px;border-radius:50%;' +
+      'background:#fff;margin-right:7px;animation:pv-blink 1s steps(1) infinite}' +
+      '@keyframes pv-blink{50%{opacity:.15}}' +
+      '#' + BAR_ID + ' .pv-msg{font-size:17px;font-weight:700}' +
+      '#' + BAR_ID + ' .pv-no{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:22px;' +
+      'font-weight:700;letter-spacing:1px;background:#fff;color:#b3261e;padding:2px 12px;border-radius:5px}' +
+      '#' + BAR_ID + ' .pv-left{margin-left:auto;font-size:13px;opacity:.9;white-space:nowrap}' +
+      'body.packvideo-waiting #txt_imei{outline:3px solid #b3261e!important;background:#fff5f5!important;' +
+      'font-family:ui-monospace,Menlo,Consolas,monospace!important}';
+    (document.head || document.documentElement).appendChild(s);
+  }
+
+  function showWaiting(info) {
+    ensureStyle();
+    var bar = document.getElementById(BAR_ID);
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = BAR_ID;
+      bar.innerHTML =
+        '<span class="pv-rec"><span class="pv-dot"></span>กำลังอัดวิดีโอ</span>' +
+        '<span class="pv-msg">ยิงบาร์โค้ด<u>เลขพัสดุบนกล่อง</u>เพื่อปิดคลิป</span>' +
+        '<span class="pv-no"></span><span class="pv-left"></span>';
+      document.body.appendChild(bar);
+    }
+    bar.querySelector('.pv-no').textContent = info.v;
+
+    var secs = Math.max(0, Math.round((info.at + EXPECT_TTL_MS - Date.now()) / 1000));
+    bar.querySelector('.pv-left').textContent =
+      'เลิกรอใน ' + Math.floor(secs / 60) + ':' + ('0' + (secs % 60)).slice(-2);
+
+    if (!saved) {
+      saved = { padding: document.body.style.paddingTop, ph: null, label: null, labelEl: null };
+      var el = inputEl();
+      if (el) {
+        saved.ph = el.getAttribute('placeholder');
+        el.setAttribute('placeholder', 'ยิงเลขพัสดุบนกล่อง');
+        // ป้าย "Imei" ของแถวนั้น — หน้าจริงเป็น <th> คู่กับ <td> ที่มี input อยู่
+        var row = el.closest && el.closest('tr');
+        var th = row && row.querySelector('th');
+        if (th) { saved.labelEl = th; saved.label = th.textContent; th.textContent = 'เลขพัสดุ'; }
+      }
+      document.body.classList.add('packvideo-waiting');
+    }
+    pushContentDown(bar);
+    if (inputEl()) { try { inputEl().focus(); } catch (e) {} }
+  }
+
+  /**
+   * ดันเนื้อหาของหน้าลงมาเท่าความสูงแถบ เพื่อไม่ให้แถบไปทับหัวหน้าเดิม
+   *
+   * ต้องวัดหลังเบราว์เซอร์จัดหน้าเสร็จ — วัดทันทีที่เพิ่งใส่ลง DOM จะได้ค่าที่
+   * ยังไม่นิ่ง (เคยได้ 365px จากแถบที่จริงๆ สูง 49px) แล้วหน้าจะกระตุกให้เห็น
+   * หนึ่งจังหวะก่อนรอบถัดไปจะแก้ให้ · ตัดค่าที่เพี้ยนทิ้งอีกชั้นด้วย
+   */
+  function pushContentDown(bar) {
+    var apply = function () {
+      var h = bar.offsetHeight;
+      if (h > 0 && h < 200) document.body.style.paddingTop = h + 'px';
+    };
+    if (window.requestAnimationFrame) requestAnimationFrame(apply);
+    else apply();
+  }
+
+  function hideWaiting() {
+    var bar = document.getElementById(BAR_ID);
+    if (bar) bar.parentNode.removeChild(bar);
+    if (saved) {
+      document.body.style.paddingTop = saved.padding || '';
+      document.body.classList.remove('packvideo-waiting');
+      var el = inputEl();
+      if (el) {
+        if (saved.ph === null) el.removeAttribute('placeholder');
+        else el.setAttribute('placeholder', saved.ph);
+      }
+      if (saved.labelEl && saved.label !== null) saved.labelEl.textContent = saved.label;
+      saved = null;
+    }
+  }
+
+  /** ให้หน้าจอตรงกับสถานะจริงเสมอ — เรียกได้บ่อยเท่าไหร่ก็ได้ */
+  function syncUi() {
+    try {
+      if (!UI_ENABLED || !ACTIVE || !inputEl()) return;
+      var info = expectedInfo();
+      if (info) showWaiting(info);
+      else hideWaiting();
+    } catch (e) { swallow(e); }
+  }
+
+  function startUi() {
+    if (!UI_ENABLED || uiTimer) return;
+    syncUi();
+    // เดินทุกวินาทีเพื่อให้เวลาถอยหลังเดินจริง และแถบหายเองเมื่อครบ 10 นาที
+    uiTimer = setInterval(syncUi, 1000);
   }
 
   /**
@@ -368,6 +506,7 @@
       hasJquery = bindAjax();
       bindKey();
       if (isLabelPage()) onLabelPage();
+      startUi();
       debug('ทำงานที่โต๊ะ', station, '· ดักเลขพัสดุ:', INTERCEPT_TRACKING ? 'เปิด' : 'ปิด');
     } catch (err) { swallow(err); }
   }
