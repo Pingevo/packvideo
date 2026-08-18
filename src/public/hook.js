@@ -25,11 +25,25 @@
   }
   var BASE = self ? self.src.replace(/\/hook\.js.*$/, '') : '';
 
+  /**
+   * ค่าประจำเครื่อง — ต้องอ่านซ้ำได้ ไม่ใช่อ่านครั้งเดียวตอนสคริปต์ถูกประเมิน
+   *
+   * bridge.html ส่งค่ามาแบบ async (รอ iframe โหลดแล้วค่อย postMessage) ถ้าอ่านครั้งเดียว
+   * ตอนโหลด การโหลดหน้าครั้งแรกหลังล้าง localStorage จะอ่านได้ null ไปแล้วก่อน bridge
+   * จะส่งมาถึง แล้ว hook จะเงียบทั้งที่ตั้งค่าไว้ถูก — ต้องรีเฟรชอีกรอบถึงจะทำงาน
+   * ซึ่งเป็นการพึ่งโชค ไม่ใช่การออกแบบ
+   */
   var station = null, token = null;
-  try {
-    station = localStorage.getItem('packvideo.station_id');
-    token = localStorage.getItem('packvideo.token');
-  } catch (e) { /* localStorage ถูกปิด — ทำงานต่อไม่ได้ แต่ต้องไม่ throw */ }
+
+  function refreshConfig() {
+    try {
+      station = localStorage.getItem('packvideo.station_id');
+      token = localStorage.getItem('packvideo.token');
+    } catch (e) { /* localStorage ถูกปิด — ทำงานต่อไม่ได้ แต่ต้องไม่ throw */ }
+    return !!(BASE && station && token);
+  }
+
+  refreshConfig();
 
   // ── ส่งสัญญาณ ───────────────────────────────────────────────
   var recent = {};
@@ -447,7 +461,7 @@
   /** ให้หน้าจอตรงกับสถานะจริงเสมอ — เรียกได้บ่อยเท่าไหร่ก็ได้ */
   function syncUi() {
     try {
-      if (!UI_ENABLED || !ACTIVE || !inputEl()) return;
+      if (!UI_ENABLED || !started || !inputEl()) return;
       var info = expectedInfo();
       if (info) showWaiting(info);
       else hideWaiting();
@@ -563,7 +577,7 @@
   var hasJquery = false;
 
   /**
-   * เครื่องนี้ใช้ระบบวิดีโอหรือเปล่า
+   * เครื่องนี้เริ่มทำงานจริงแล้วหรือยัง
    *
    * คลังมีเครื่องที่ไม่ได้ต่อกล้อง และเครื่องเหล่านั้นก็โหลด hook.js ตัวเดียวกัน
    * เพราะ script tag อยู่ในหน้าแพ็คที่ใช้ร่วมกันทุกเครื่อง
@@ -571,20 +585,89 @@
    * **เครื่องที่ยังไม่ได้ตั้งค่าต้องไม่ถูกแตะเลยแม้แต่นิดเดียว** — ไม่ผูกตัวรับ
    * ไม่ดัก Enter ไม่แตะ DOM ไม่ยิงอะไรทั้งนั้น เพราะการดัก Enter บนเครื่อง
    * ที่ไม่มี station จะกลืนการสแกนไปเฉยๆ แล้วพนักงานจะสแกนแล้วไม่มีอะไรเกิดขึ้น
+   *
+   * ข้อนี้ยังคงอยู่ครบหลังเปลี่ยนมารอค่าจาก bridge — ระหว่างรอเราแค่ฟังเงียบๆ
+   * (message · storage · poll) ไม่มีอะไรที่หน้าเดิมรู้สึกได้ และการผูกตัวดักทั้งหมด
+   * ยังเกิดใน start() ซึ่งเรียกเฉพาะตอนที่มี station กับ token ครบแล้วเท่านั้น
    */
-  var ACTIVE = !!(BASE && station && token);
+  var started = false;
 
-  function boot() {
+  /** ผูกทุกอย่างและเริ่มทำงานจริง — เรียกซ้ำได้ ทำงานแค่ครั้งเดียว */
+  function start() {
+    if (started) return;
+    started = true;
     try {
-      if (!ACTIVE) {
-        debug('เครื่องนี้ไม่ได้ตั้งค่าใช้ระบบวิดีโอ — hook ไม่ทำงานอะไรเลย');
-        return;   // ออกก่อนผูกตัวรับใดๆ ทั้งสิ้น
-      }
       hasJquery = bindAjax();
       bindKey();
       if (isLabelPage()) onLabelPage();
       startUi();
       debug('ทำงานที่โต๊ะ', station, '· ดักเลขพัสดุ:', INTERCEPT_TRACKING ? 'เปิด' : 'ปิด');
+    } catch (err) { swallow(err); }
+  }
+
+  var CONFIG_WAIT_MS = 10000;   // รอ bridge นานสุดเท่านี้แล้วเลิกรอ
+  var CONFIG_POLL_MS = 250;
+
+  /**
+   * รอค่าจาก bridge.html โดย **ไม่แตะหน้าเดิมเลยระหว่างรอ**
+   *
+   * ระหว่างรอเราไม่ผูกตัวดัก ไม่แตะ DOM ไม่ยิงอะไร — เครื่องที่ไม่ได้ใช้ระบบวิดีโอ
+   * จะรอเงียบๆ ครบ 10 วินาทีแล้วเลิก เหมือนเดิมทุกอย่างจากมุมของหน้าเดิม
+   *
+   * ฟังสามทางเพราะแต่ละทางพลาดได้คนละแบบ:
+   *   1. postMessage จาก bridge ตรงๆ — เร็วที่สุด และเขียนค่าลง localStorage ให้เลย
+   *      ฝั่ง sellcenter จึงเหลือแค่ฝัง iframe ไม่ต้องเขียน listener เอง
+   *   2. storage event — กรณีที่แท็บอื่นหรือโค้ดอื่นเป็นคนเขียนค่า
+   *   3. poll — กันกรณีที่ทั้งสองทางบนไม่เกิด (เช่น ค่าถูกเขียนก่อนเราผูก listener ทัน)
+   */
+  function waitForConfig() {
+    var timer = null, deadline = null;
+
+    function stop() {
+      if (timer) clearInterval(timer);
+      try { window.removeEventListener('message', onMessage); } catch (e) {}
+      try { window.removeEventListener('storage', onStorage); } catch (e) {}
+      if (deadline) clearTimeout(deadline);
+    }
+
+    function tryStart() {
+      if (!refreshConfig()) return false;
+      stop();
+      debug('ได้ค่าประจำเครื่องแล้ว — เริ่มทำงาน');
+      start();
+      return true;
+    }
+
+    function onMessage(ev) {
+      try {
+        // ต้องมาจาก origin ของเซิร์ฟเวอร์ packvideo เท่านั้น — ห้ามเชื่อ message จากใครก็ได้
+        // ที่ส่งเข้ามา เพราะนั่นเท่ากับให้หน้าอื่นตั้ง station/token ให้เครื่องนี้ได้
+        if (!BASE || ev.origin !== new URL(BASE, location.href).origin) return;
+        var d = ev.data;
+        if (!d || d.source !== 'packvideo-bridge') return;
+        if (d.station_id) localStorage.setItem('packvideo.station_id', d.station_id);
+        if (d.token) localStorage.setItem('packvideo.token', d.token);
+        tryStart();
+      } catch (e) { swallow(e); }
+    }
+
+    function onStorage() { tryStart(); }
+
+    try {
+      window.addEventListener('message', onMessage);
+      window.addEventListener('storage', onStorage);
+      timer = setInterval(tryStart, CONFIG_POLL_MS);
+      deadline = setTimeout(function () {
+        stop();
+        debug('เครื่องนี้ไม่ได้ตั้งค่าใช้ระบบวิดีโอ — hook ไม่ทำงานอะไรเลย');
+      }, CONFIG_WAIT_MS);
+    } catch (e) { swallow(e); }
+  }
+
+  function boot() {
+    try {
+      if (refreshConfig()) return start();
+      waitForConfig();
     } catch (err) { swallow(err); }
   }
 
