@@ -224,21 +224,39 @@ export function item({ stationId, imei }) {
 }
 
 /**
- * ลงทะเบียนจัดส่งแล้ว = กล่องถูกปิดและได้เลขพัสดุ → ปิดคลิป
+ * ลงทะเบียนจัดส่งแล้ว — ผูกเลขพัสดุกับคลิป แต่ **ยังไม่ปิด**
  *
- * ปิดด้วยสถานะ `registered` ไม่ใช่ `verified` เพราะสองอย่างนี้ไม่เท่ากัน —
- * `verified` แปลว่าพนักงานยิงบาร์โค้ดบนใบปะหน้าจริงแล้วตรงกับคลิป ส่วนอันนี้เรา
- * เอาเลขมาจากคำตอบของ API ตอนลงทะเบียน ไม่มีการยิงบาร์โค้ดยืนยัน
- * ถ้าเรียกว่า verified เหมือนกันคือโม้คุณภาพหลักฐานให้ดูดีกว่าความจริง
+ * ตอนแรกทำให้ปิดตรงนี้ แต่ดูหน้างานจริงแล้วหลังลงทะเบียนยังมีอีกสองขั้น คือ
+ * พิมพ์ใบปะหน้าแล้วแปะ และถ่ายรูปกล่องที่แปะเสร็จ ถ้าปิดตั้งแต่ลงทะเบียน วิดีโอ
+ * จะขาดตรงขั้นตอนที่พิสูจน์ว่าใบปะหน้าใบไหนถูกแปะบนกล่องไหน ซึ่งเป็นข้อที่
+ * ขนส่งกับลูกค้าเถียงกันบ่อยที่สุด
  */
-export async function shipRegistered({ stationId, trackingNo, projectId }) {
+export function shipRegistered({ stationId, trackingNo, projectId }) {
   const clip = openClipOf(stationId);
   if (!clip) return null;
   if (trackingNo) clip.tracking_no = trackingNo;
   if (projectId) clip.project_id = projectId;
   touch(clip);
   persist(clip, 'ship', { tracking_no: trackingNo, project_id: projectId });
-  log.info({ clip_id: clip._id, tracking_no: trackingNo, project_id: projectId }, 'ลงทะเบียนจัดส่งแล้ว ปิดคลิป');
+  emit(clip.station_id, 'ship', { clip_id: clip._id, tracking_no: clip.tracking_no });
+  log.info({ clip_id: clip._id, tracking_no: trackingNo, project_id: projectId }, 'ลงทะเบียนจัดส่งแล้ว');
+  return clip;
+}
+
+/**
+ * ถ่ายรูปกล่องเสร็จ = จบงานแพ็คกล่องนี้จริง → ปิดคลิป
+ *
+ * ปิดด้วยสถานะ `registered` ไม่ใช่ `verified` เพราะสองอย่างนี้ไม่เท่ากัน —
+ * verified แปลว่าพนักงานยิงบาร์โค้ดบนใบปะหน้าแล้วตรงกับคลิป ส่วนงาน KOL ไม่มี
+ * ขั้นตอนยิงยืนยันเลย เราปิดจากการที่ระบบบอกว่ารูปถูกอัปโหลดแล้วเท่านั้น
+ */
+export async function photoTaken({ stationId, projectId }) {
+  const clip = openClipOf(stationId);
+  if (!clip) return null;
+  if (projectId) clip.project_id = projectId;
+  touch(clip);
+  persist(clip, 'photo', { project_id: projectId });
+  log.info({ clip_id: clip._id, project_id: projectId }, 'ถ่ายรูปกล่องแล้ว ปิดคลิป');
   return close(clip._id, 'registered');
 }
 

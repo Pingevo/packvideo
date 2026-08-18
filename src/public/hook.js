@@ -25,6 +25,9 @@
    */
   var KOL_ADD_PATH = '/kol/shipping/add';
   var KOL_REGIS_PATH = '/kol/shipping/regis';
+  // ปิดคลิปตรงนี้ ไม่ใช่ตอนลงทะเบียนจัดส่ง — หลังลงทะเบียนยังต้องพิมพ์ใบปะหน้า
+  // แล้วแปะ แล้วถ่ายรูปกล่อง ซึ่งเป็นขั้นที่พิสูจน์ว่าใบไหนอยู่บนกล่องไหน
+  var KOL_PHOTO_PATH = '/kol/shipping/save_image';
   var KOL_OPEN_KEY = 'packvideo.kol_open';
   var KOL_TTL_MS = 60 * 60 * 1000;   // เกินชั่วโมงถือว่าคนละรอบงาน เริ่มคลิปใหม่
 
@@ -65,6 +68,7 @@
     guessRecording(true);
   }
 
+  /** ลงทะเบียนจัดส่งสำเร็จ — ผูกเลขพัสดุ แต่ยังอัดต่อจนกว่าจะถ่ายรูปเสร็จ */
   function onKolRegistered(data, result) {
     var trackingNo = (result && (result.tracking_no || (result.data && result.data.tracking_no))) || null;
     beacon('ship', {
@@ -72,6 +76,11 @@
       tracking_no: trackingNo,
       project_id: fieldFrom(data, 'project_id'),
     });
+  }
+
+  /** ถ่ายรูปกล่องเสร็จ = จบงานกล่องนี้ → ปิดคลิป */
+  function onKolPhoto(data) {
+    beacon('photo', { trace_id: uuid(), project_id: fieldFrom(data, 'project_id') });
     kolClearOpen();
     guessRecording(false);
   }
@@ -226,6 +235,10 @@
           // ลงทะเบียนจัดส่งสำเร็จ = กล่องปิดแล้ว ได้เลขพัสดุแล้ว → ปิดคลิป
           if (String(opts.url).indexOf(KOL_REGIS_PATH) !== -1) {
             if (data && data.success) onKolRegistered(opts.data, data);
+            return;
+          }
+          if (String(opts.url).indexOf(KOL_PHOTO_PATH) !== -1) {
+            if (data && data.success) onKolPhoto(opts.data);
             return;
           }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
