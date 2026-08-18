@@ -12,6 +12,7 @@ import { searchRouter } from './routes/search.js';
 import { exportRouter } from './routes/export.js';
 import { pinRouter } from './routes/pin.js';
 import { shareApiRouter, sharePublicRouter } from './routes/share.js';
+import { bridgeRouter } from './routes/bridge.js';
 import { devRouter } from './dev/routes.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
@@ -30,6 +31,22 @@ export function createApp() {
       autoLogging: { ignore: (req) => req.url.startsWith('/api/health') },
     }),
   );
+
+  /**
+   * ห้ามให้ใครเอาหน้าของเราไปฝัง iframe — `clips.html` มีปุ่มสร้างลิงก์ส่งคนนอก
+   * และปุ่มถอนตรึง ถ้าโดนฝังซ้อนแล้วหลอกให้กดคือหลักฐานหลุดหรือถูกลบได้
+   *
+   * ข้อยกเว้นเดียวคือ /bridge.html ซึ่งมีหน้าที่ถูกฝังโดยตรง — route นั้นเขียนทับ
+   * สองหัวข้อนี้เองด้วยรายชื่อจาก ALLOWED_ORIGINS
+   */
+  app.use((_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.setHeader('X-Frame-Options', 'DENY');   // เผื่อเบราว์เซอร์เก่าที่ยังไม่รู้จัก CSP
+    next();
+  });
+
+  // ต้องมาก่อน express.static เพื่อให้ route นี้ชนะไฟล์ที่ชื่อซ้ำกัน
+  app.use(bridgeRouter);
 
   app.use('/api', healthRouter);
   app.use('/api', stationsRouter);
