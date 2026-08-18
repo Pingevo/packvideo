@@ -437,7 +437,11 @@
    */
   var lastOpenAt = 0;
 
-  function openRecorder() {
+  var REC_OPENED_KEY = 'packvideo.rec_opened';
+
+  function openedBefore() { return readFlag(REC_OPENED_KEY) === '1'; }
+
+  function openRecorder(byUser) {
     try {
       // กันเปิดซ้ำติดๆ กัน — หน้าต่างมีชื่อจึงเป็นตัวเดิม แต่การเรียกซ้ำจะสั่งให้มัน
       // โหลดใหม่ ซึ่งถ้าเผอิญเริ่มอัดไปแล้วก็คือทำคลิปที่กำลังอัดขาด
@@ -445,6 +449,8 @@
       lastOpenAt = Date.now();
       var w = window.open(BASE + '/rec.html', 'packvideo-rec');
       if (!w) return false;          // ตัวบล็อกป๊อปอัปกัน — ปล่อยให้ปุ่มบนแถบเป็นทางสำรอง
+      // จำไว้ว่าเครื่องนี้เคยเปิดหน้าต่างอัดจริง ครั้งต่อไปถึงจะเปิดให้เองได้
+      if (byUser) { try { localStorage.setItem(REC_OPENED_KEY, '1'); } catch (e) {} }
       setTimeout(pollStatus, 3000);  // ให้แถบอัปเดตเร็วกว่ารอบปกติ
       return true;
     } catch (e) { swallow(e); return false; }
@@ -459,6 +465,9 @@
   function armAutoOpen() {
     function once(ev) {
       if (autoOpenTried) return cleanup();
+      // ครั้งแรกของเครื่องต้องให้คนกดเอง — ป๊อปอัปที่โผล่มาเองบนเครื่องที่ไม่ได้ตั้งใจ
+      // ใช้ระบบวิดีโอคือการรบกวนงานเขา ไม่ใช่การช่วย · ครั้งต่อๆ ไปค่อยเปิดให้เอง
+      if (!openedBefore()) return;
       // การกดที่แถบมีตัวจัดการของมันเองแล้ว ถ้าไม่ข้ามจะเปิดสองครั้งต่อการกดหนึ่งที
       if (ev && ev.target && ev.target.closest && ev.target.closest('#' + PILL_ID)) return;
       if (!lastStatus || lastStatus.connected !== false) return;   // ยังไม่รู้สถานะ หรือเปิดอยู่แล้ว
@@ -486,7 +495,7 @@
       el = document.createElement('button');
       el.id = PILL_ID;
       el.type = 'button';
-      el.onclick = function () { if (lastStatus && !lastStatus.connected) openRecorder(); };
+      el.onclick = function () { if (lastStatus && !lastStatus.connected) openRecorder(true); };
       // สร้างลูกครั้งเดียวแล้วอัปเดตแค่ข้อความ — ถ้าเขียน innerHTML ทับทุกรอบ จุดจะถูก
       // สร้างใหม่ทุก 15 วินาที แล้ว animation เริ่มนับหนึ่งใหม่ตลอด กะพริบไม่เป็นจังหวะ
       el.appendChild(document.createElement('span')).className = 'pv-live';
@@ -866,6 +875,13 @@
 
   function boot() {
     try {
+      // ประกาศไว้แล้วว่าเครื่องนี้ไม่ใช้ระบบกล้อง — ต่างจาก "ยังไม่ได้ตั้งค่า" ตรงที่
+      // อันนั้นคือยังไม่ได้ตอบ จึงรอค่าจาก bridge ต่อได้ ส่วนอันนี้คือตอบแล้วว่าไม่
+      // ต้องไม่รอ ไม่ผูกอะไร ไม่แตะหน้าเดิมเลยแม้แต่นิดเดียว
+      if (readFlag('packvideo.optout') === '1') {
+        debug('เครื่องนี้ประกาศว่าไม่ใช้ระบบกล้อง — hook ไม่ทำงานอะไรเลย');
+        return;
+      }
       if (refreshConfig()) return start();
       waitForConfig();
     } catch (err) { swallow(err); }
