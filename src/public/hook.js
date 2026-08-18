@@ -206,6 +206,10 @@
             if (type === 'keyup') { el.value = ''; clearExpected(); }
             debug('ดักเลขพัสดุที่รออยู่', value);
             beacon('scan', { value: value, trace_id: uuid() });
+            // นี่คือจังหวะที่คลิปถูกปิดจริง — ไม่ใช่ onResult ซึ่งเป็นเส้นทางของการ
+            // สแกน IMEI เท่านั้น ถ้าไม่บอกแถบตรงนี้ พนักงานจะเห็น "กำลังบันทึก"
+            // ค้างต่อไปจนกว่าจะถึงรอบถามสถานะ ทั้งที่ปิดคลิปไปแล้ว
+            if (type === 'keyup') guessRecording(false);
             return;
           }
 
@@ -523,14 +527,35 @@
    * เดาแล้วถามซ้ำเร็วๆ สองจังหวะ ถ้าเดาผิด (เช่นกล้องเปิดไม่ได้จริง) ของจริงจะมาทับ
    * ให้เองภายในไม่กี่วินาที ไม่ค้างผิดยาว
    */
+  var guess = null;          // { on: bool, at: number }
+  var GUESS_HOLD_MS = 4000;
+
   function guessRecording(on) {
     try {
       if (!lastStatus || !lastStatus.connected) return;   // ยังไม่รู้สถานะ อย่าเดามั่ว
+      guess = { on: on, at: Date.now() };
       lastStatus.recording = on;
       renderPill(lastStatus);
       setTimeout(pollStatus, 1500);
       setTimeout(pollStatus, 5000);
     } catch (e) { swallow(e); }
+  }
+
+  /**
+   * ให้ค่าที่เราเดายืนหยัดสักครู่ก่อนยอมให้ของจริงทับ
+   *
+   * ไม่งั้นจะกระพริบไปกลับ — เราพลิกแถบทันทีที่สแกน แล้วรอบยืนยันที่ 1.5 วินาที
+   * ไปถามตอนที่หน้าต่างอัดยังรายงานค่าใหม่มาไม่ถึง เซิร์ฟเวอร์จึงตอบค่าเก่า
+   * แถบก็เด้งกลับ แล้วอีก 3.5 วินาทีค่อยถูกอีกครั้ง — พนักงานเห็นแล้วสับสนกว่าเดิม
+   *
+   * ถือไว้แค่ 4 วินาที ถ้าเดาผิดจริง (กล้องเปิดไม่ได้) ของจริงก็ยังชนะในที่สุด
+   */
+  function reconcile(d) {
+    if (!d || !guess) return d;
+    if (Date.now() - guess.at > GUESS_HOLD_MS) { guess = null; return d; }
+    if (d.recording === guess.on) { guess = null; return d; }
+    d.recording = guess.on;
+    return d;
   }
 
   function pollStatus() {
@@ -539,7 +564,7 @@
       fetch(deskUrl(), { credentials: 'omit' })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (d) {
-          lastStatus = d && d.ok ? d : null;
+          lastStatus = d && d.ok ? reconcile(d) : null;
           renderPill(lastStatus);
         })
         .catch(function () { lastStatus = null; renderPill(null); });
