@@ -124,11 +124,13 @@
     // START ที่จังหวะกด Enter ไม่ใช่ตอน API ตอบ — ช่วง "กล่องยังว่าง" คือเงื่อนไขหลักฐานข้อ 1
     // และโค้ดเดิมตั้ง timeout ไว้ถึง 10 วินาที แปลว่าเคยเจอกรณี API ช้าจริง
     beacon('start', { trace_id: ctx.trace_id, value: value, user: user });
+    guessRecording(true);
   }
 
   function onResult(result) {
     if (!ctx.trace_id) return;
     var d = decide(result);
+    if (d.event === 'commit' || d.event === 'abort') guessRecording(false);
     beacon(d.event, {
       trace_id: ctx.trace_id,
       ordersn: result && result.ordersn,
@@ -321,7 +323,13 @@
       '#' + PILL_ID + '.pv-warn{background:#9a6700;color:#fff;opacity:1}' +
       // เขียว = พร้อม ไม่กะพริบ · แดงกะพริบ = กำลังบันทึกจริง ให้เหมือนหน้าต่างอัด
       '#' + PILL_ID + ' .pv-live{width:9px;height:9px;border-radius:50%;background:#2da44e}' +
-      '#' + PILL_ID + '.pv-rec .pv-live{background:#f85149;animation:pv-blink 1.2s steps(1) infinite}' +
+      '#' + PILL_ID + '.pv-rec .pv-live{background:#f85149;' +
+      'animation:pv-pulse 1.1s ease-in-out infinite}' +
+      // จางอย่างเดียวไม่พอ จุดแดง 9px บนพื้นแดงเข้มจางลงแล้วแทบแยกไม่ออกว่าติดหรือดับ
+      // จึงให้ย่อ-ขยายและมีวงแหวนกระจายออกด้วย เห็นจากมุมตาได้โดยไม่ต้องจ้อง
+      '@keyframes pv-pulse{' +
+      '0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 0 0 rgba(248,81,73,.7)}' +
+      '50%{opacity:.35;transform:scale(.7);box-shadow:0 0 0 5px rgba(248,81,73,0)}}' +
       '#' + PILL_ID + '.pv-rec{background:#2b1113;color:#ffd7d5;opacity:1}' +
       '#' + PILL_ID + '.pv-bad .pv-live,#' + PILL_ID + '.pv-warn .pv-live{background:#fff;animation:none}';
     (document.head || document.documentElement).appendChild(s);
@@ -475,6 +483,10 @@
       el.id = PILL_ID;
       el.type = 'button';
       el.onclick = function () { if (lastStatus && !lastStatus.connected) openRecorder(); };
+      // สร้างลูกครั้งเดียวแล้วอัปเดตแค่ข้อความ — ถ้าเขียน innerHTML ทับทุกรอบ จุดจะถูก
+      // สร้างใหม่ทุก 15 วินาที แล้ว animation เริ่มนับหนึ่งใหม่ตลอด กะพริบไม่เป็นจังหวะ
+      el.appendChild(document.createElement('span')).className = 'pv-live';
+      el.appendChild(document.createElement('span')).className = 'pv-text';
       document.body.appendChild(el);
     }
 
@@ -496,9 +508,29 @@
         + (st.disk_level && st.disk_level !== 'normal' ? ' · ดิสก์เหลือ ' + st.disk_free_gb + ' GB' : '')
         + (st.queue_depth > 0 ? ' · คิว ' + st.queue_depth : '');
     }
-    el.className = cls;
-    el.innerHTML = '<span class="pv-live"></span><span></span>';
-    el.lastChild.textContent = text;
+    if (el.className !== cls) el.className = cls;
+    var t = el.querySelector('.pv-text');
+    if (t.textContent !== text) t.textContent = text;
+  }
+
+  /**
+   * เดาสถานะทันทีจากสิ่งที่เรารู้เอง แล้วให้ของจริงตามมายืนยัน
+   *
+   * เราเป็นคนยิงสัญญาณ start/commit เอง จึงรู้ตั้งแต่วินาทีที่พนักงานกด Enter ว่า
+   * กำลังจะเริ่มหรือจบคลิป ถ้ารอรอบถามสถานะ (15 วินาที) แถบจะขึ้นช้ากว่าความจริงมาก
+   * จนดูเหมือนค้าง — ที่หน้างานคือ "สแกนแล้วไม่เห็นมีอะไรเกิดขึ้น"
+   *
+   * เดาแล้วถามซ้ำเร็วๆ สองจังหวะ ถ้าเดาผิด (เช่นกล้องเปิดไม่ได้จริง) ของจริงจะมาทับ
+   * ให้เองภายในไม่กี่วินาที ไม่ค้างผิดยาว
+   */
+  function guessRecording(on) {
+    try {
+      if (!lastStatus || !lastStatus.connected) return;   // ยังไม่รู้สถานะ อย่าเดามั่ว
+      lastStatus.recording = on;
+      renderPill(lastStatus);
+      setTimeout(pollStatus, 1500);
+      setTimeout(pollStatus, 5000);
+    } catch (e) { swallow(e); }
   }
 
   function pollStatus() {
