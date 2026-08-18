@@ -319,8 +319,10 @@
       '#' + PILL_ID + '.pv-bad{background:#b3261e;color:#fff;cursor:pointer;opacity:1;' +
       'font-size:13px;font-weight:700}' +
       '#' + PILL_ID + '.pv-warn{background:#9a6700;color:#fff;opacity:1}' +
-      '#' + PILL_ID + ' .pv-live{width:9px;height:9px;border-radius:50%;background:#2da44e;' +
-      'animation:pv-blink 1.6s steps(1) infinite}' +
+      // เขียว = พร้อม ไม่กะพริบ · แดงกะพริบ = กำลังบันทึกจริง ให้เหมือนหน้าต่างอัด
+      '#' + PILL_ID + ' .pv-live{width:9px;height:9px;border-radius:50%;background:#2da44e}' +
+      '#' + PILL_ID + '.pv-rec .pv-live{background:#f85149;animation:pv-blink 1.2s steps(1) infinite}' +
+      '#' + PILL_ID + '.pv-rec{background:#2b1113;color:#ffd7d5;opacity:1}' +
       '#' + PILL_ID + '.pv-bad .pv-live,#' + PILL_ID + '.pv-warn .pv-live{background:#fff;animation:none}';
     (document.head || document.documentElement).appendChild(s);
   }
@@ -408,7 +410,7 @@
    * สิ่งที่ทำได้และทำตรงนี้คือ ทำให้พนักงานไม่ต้องคอยจำว่าหน้าต่างนั้นเปิดอยู่ไหม
    */
   var PILL_ID = 'packvideo-status';
-  var STATUS_POLL_MS = 30000;
+  var STATUS_POLL_MS = 15000;   // การแพ็คหนึ่งออเดอร์ราวหนึ่งนาที ช้ากว่านี้แถบจะตามไม่ทัน
   var statusTimer = null;
   var lastStatus = null;
   var autoOpenTried = false;
@@ -487,7 +489,10 @@
       cls = 'pv-warn';
       text = 'ดิสก์เต็ม หยุดบันทึกชั่วคราว · ' + st.station_id;
     } else {
-      text = 'กำลังอัด · ' + st.station_id
+      // แยก "เปิดหน้าต่างไว้เฉยๆ" กับ "กล้องกำลังบันทึกจริง" — สองอันนี้ไม่เหมือนกัน
+      // และเขียนให้ตรงกับที่หน้าต่างอัดเขียนอยู่ พนักงานจะได้ไม่ต้องแปลสองภาษา
+      cls = st.recording ? 'pv-rec' : '';
+      text = (st.recording ? 'กำลังบันทึก · ' : 'พร้อม · ') + st.station_id
         + (st.disk_level && st.disk_level !== 'normal' ? ' · ดิสก์เหลือ ' + st.disk_free_gb + ' GB' : '')
         + (st.queue_depth > 0 ? ' · คิว ' + st.queue_depth : '');
     }

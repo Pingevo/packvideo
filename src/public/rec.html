@@ -227,6 +227,9 @@
     $('rec').className = 'rec' + (on ? ' on' : '');
     setText('rec-text', on ? 'กำลังอัด' : 'พร้อม');
     $('stop').disabled = !on;
+    // ยิงทันทีไม่รอรอบ 30 วินาที — แถบสถานะบนหน้าแพ็คอ่านค่านี้ ถ้ารอรอบปกติ
+    // พนักงานจะเห็น "พร้อม" ค้างอยู่ทั้งที่กล้องเริ่มบันทึกไปแล้วครึ่งนาที
+    sendHeartbeat();
   }
 
   // ── คิวชิ้นวิดีโอ ───────────────────────────────────────────
@@ -343,16 +346,21 @@
     setText('elapsed', Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'));
   }, 500);
 
-  setInterval(function () {
+  function sendHeartbeat() {
     fetch('/api/stations/' + encodeURIComponent(station) + '/heartbeat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_id: localStorage.getItem(K.client),
-        queue_depth: S.queue.length,
+        queue_depth: S.queueDepth,
         app_version: VERSION,
+        // หน้านี้เป็นตัวเดียวที่รู้จริงว่ากำลังบันทึกอยู่ไหม — เซิร์ฟเวอร์เดาจาก
+        // สัญญาณ start/commit ได้ไม่แม่น เพราะกล้องอาจเปิดไม่ได้ทั้งที่ออเดอร์เริ่มแล้ว
+        recording: !!S.clipId,
       }),
     }).catch(function () {});
-  }, 30000);
+  }
+
+  setInterval(sendHeartbeat, 30000);
 
   // ── กันหน้าปิดโดยไม่ตั้งใจ ──────────────────────────────────
   window.addEventListener('beforeunload', function (e) {

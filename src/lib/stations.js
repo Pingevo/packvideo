@@ -43,6 +43,7 @@ export function listStations() {
       last_seen_at: claim.last_seen_at,
       app_version: claim.app_version,
       queue_depth: claim.queue_depth,
+      recording: !!claim.recording,
       stale: false,
     };
   });
@@ -96,13 +97,15 @@ export function claimStation(stationId, { clientId, deviceName, ip, appVersion }
 }
 
 /** ต่ออายุการจับจอง — เครื่องที่ไม่ได้ถือโต๊ะนี้อยู่จะถูกปฏิเสธ ไม่ใช่แอบเขียนทับ */
-export function heartbeat(stationId, { clientId, queueDepth, appVersion }) {
+export function heartbeat(stationId, { clientId, queueDepth, appVersion, recording }) {
   const claim = claims.get(stationId);
   if (!claim || claim.client_id !== clientId) return { ok: false, reason: 'การจับจองหมดอายุแล้ว' };
 
   claim.last_seen_at = new Date();
   if (typeof queueDepth === 'number') claim.queue_depth = queueDepth;
   if (appVersion) claim.app_version = appVersion;
+  // หน้าต่างอัดเป็นตัวเดียวที่รู้ว่า MediaRecorder เดินอยู่จริงไหม
+  if (typeof recording === 'boolean') claim.recording = recording;
   return { ok: true };
 }
 

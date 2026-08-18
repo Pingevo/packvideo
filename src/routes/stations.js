@@ -34,6 +34,10 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
   const station = listStations().find((s) => s.station_id === req.params.stationId);
   if (!station) return res.status(404).json({ ok: false, error: 'ไม่มีโต๊ะหมายเลขนี้' });
 
+  // ห้ามแคชเด็ดขาด — นี่คือสถานะสด ถ้าเบราว์เซอร์เก็บไว้ใช้ซ้ำ แถบบนหน้าแพ็คจะค้าง
+  // อยู่ที่ค่าเก่า แล้วพนักงานจะเห็น "พร้อม" ทั้งที่กล้องบันทึกไปแล้ว (เจอตอนทดสอบจริง)
+  res.setHeader('Cache-Control', 'no-store');
+
   const disk = await storageStatus();
   res.json({
     ok: true,
@@ -41,6 +45,7 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
     connected: station.connected,
     device_name: station.device_name ?? null,
     queue_depth: station.queue_depth ?? 0,
+    recording: !!station.recording,
     last_seen_at: station.last_seen_at ?? null,
     recording_allowed: disk.recording_allowed,
     disk_level: disk.disk_level,
@@ -85,8 +90,10 @@ stationsRouter.post('/stations/:id/claim', json, (req, res) => {
 
 /** POST /api/stations/:id/heartbeat — ต่ออายุการจับจอง ทุก 30 วินาที */
 stationsRouter.post('/stations/:id/heartbeat', json, (req, res) => {
-  const { client_id: clientId, queue_depth: queueDepth, app_version: appVersion } = req.body ?? {};
-  const result = heartbeat(req.params.id, { clientId, queueDepth, appVersion });
+  const {
+    client_id: clientId, queue_depth: queueDepth, app_version: appVersion, recording,
+  } = req.body ?? {};
+  const result = heartbeat(req.params.id, { clientId, queueDepth, appVersion, recording });
   // 409 = ให้ฝั่งเครื่องรู้ว่าต้องขอจับจองใหม่ ไม่ใช่เงียบไปแล้วคิดว่ายังทำงานอยู่
   res.status(result.ok ? 200 : 409).json(result);
 });
