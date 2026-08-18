@@ -55,8 +55,7 @@
 
 <header>
   <div class="station" id="station">—</div>
-  <a href="/help.html#tab-packer" target="_blank"
-     style="margin-left:auto;margin-right:14px;font-size:12px;opacity:.6;color:inherit">คู่มือ</a>
+  <span data-packvideo-panel style="margin-left:auto;margin-right:14px"></span>
   <div class="rec" id="rec"><span class="dot"></span><span id="rec-text">พร้อม</span></div>
 </header>
 
@@ -79,6 +78,7 @@
 </div>
 
 <script src="/chunk-queue.js"></script>
+<script src="/panel.js"></script>
 <script>
 (function () {
   'use strict';
@@ -378,6 +378,35 @@
 
   // เน็ตกลับมาแล้วส่งต่อทันที ไม่ต้องรอจังหวะถอยของ backoff
   window.addEventListener('online', function () { queue.resume(); });
+
+  // ── แผงตั้งค่า/คู่มือ (FR-10 · FR-11) ───────────────────────
+  /**
+   * หน้านี้เปลี่ยนหน้าไม่ได้ระหว่างกะ แผงจึงต้องแก้ค่าได้ในหน้าเดิมจริงๆ
+   *
+   * isRecording บอกแผงจากค่าที่หน้านี้รู้เอง ซึ่งรู้ก่อนเซิร์ฟเวอร์เสมอ — แผงล็อก
+   * ถ้าฝั่งใดฝั่งหนึ่งบอกว่ากำลังอัด เอียงไปทางล็อกไว้ก่อนดีกว่าปล่อยให้คลิปขาด
+   */
+  if (window.PackvideoPanel) {
+    PackvideoPanel.mount({
+      role: 'packer',
+      hooks: {
+        isRecording: function () { return !!S.clipId; },
+
+        // เปลี่ยนกล้องแบบไม่รีโหลด — ปิด stream เดิมแล้วเปิดตัวใหม่ทับพรีวิว
+        // แผงล็อกปุ่มนี้ระหว่างอัดอยู่แล้ว ตรงนี้จึงไม่มีคลิปให้ทำขาด
+        onCameraChange: function () {
+          try { if (S.stream) S.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+          S.stream = null;
+          startCamera().catch(function (e) { warn('เปิดกล้องตัวใหม่ไม่ได้: ' + e.message); });
+        },
+
+        // ย้ายโต๊ะ/ล้างค่า = ต้องต่อ SSE ใหม่ทั้งหมด รีโหลดตรงไปตรงมากว่าและปลอดภัย
+        // เพราะสองอย่างนี้ถูกล็อกไว้ระหว่างอัดอยู่แล้ว คิวอยู่บน IndexedDB ไม่หาย
+        onStationChange: function () { location.reload(); },
+        onRelease: function () { location.reload(); },
+      },
+    });
+  }
 
   setText('station', station);
   queue.init()

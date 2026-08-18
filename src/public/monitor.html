@@ -43,8 +43,7 @@
 <header>
   <h1>สถานะระบบ</h1>
   <span class="when" id="when">กำลังโหลด…</span>
-  <a href="/help.html#tab-lead" target="_blank"
-     style="margin-left:auto;font-size:12px;opacity:.6;color:inherit">คู่มือ</a>
+  <span data-packvideo-panel style="margin-left:auto"></span>
 </header>
 
 <section>
@@ -170,5 +169,7 @@
 })();
 </script>
 
+<script src="/panel.js"></script>
+<script>PackvideoPanel.mount({ role: 'lead' });</script>
 </body>
 </html>

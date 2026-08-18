@@ -63,8 +63,7 @@
 
 <header>
   <h1>ค้นหาคลิปการแพ็ค
-    <a href="/help.html#tab-cs" target="_blank"
-       style="float:right;font-size:12px;font-weight:400;opacity:.6;color:inherit">คู่มือ</a>
+    <span data-packvideo-panel style="float:right;font-weight:400"></span>
   </h1>
   <div class="search">
     <input type="text" id="q" placeholder="วางเลขออเดอร์ เลขพัสดุ หรือ IMEI — วางอันไหนก็ได้" autofocus>
@@ -313,5 +312,7 @@
 })();
 </script>
 
+<script src="/panel.js"></script>
+<script>PackvideoPanel.mount({ role: 'cs' });</script>
 </body>
 </html>
