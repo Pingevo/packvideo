@@ -1,13 +1,21 @@
 import { Router } from 'express';
 import express from 'express';
 import { listStations, claimStation, heartbeat, releaseStation } from '../lib/stations.js';
+import { signalCors } from './signal.js';
 
 export const stationsRouter = Router();
 
 const json = express.json({ limit: '8kb' });
 
-/** GET /api/stations — สถานะทุกโต๊ะ ใช้ทั้งหน้าตั้งค่าและหน้า monitor */
-stationsRouter.get('/stations', (_req, res) => {
+/**
+ * GET /api/stations — สถานะทุกโต๊ะ ใช้ทั้งหน้าตั้งค่าและหน้า monitor
+ *
+ * เปิด CORS เฉพาะ route นี้ (อ่านอย่างเดียว ไม่มีความลับ) เพื่อให้หน้าแพ็คของ
+ * sellcenter ดึงรายชื่อโต๊ะไปทำ dropdown เลือกโต๊ะได้เองโดยไม่ต้องเข้ามาที่
+ * pack.digital.in.th เลย — claim/heartbeat/release ยังคง same-origin เท่านั้น
+ * เพราะเป็น route ที่เปลี่ยนสถานะจริง
+ */
+stationsRouter.get('/stations', signalCors, (_req, res) => {
   res.json({ ok: true, stations: listStations() });
 });
 
