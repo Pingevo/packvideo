@@ -59,6 +59,30 @@ export function commitRate(ms = 60 * 60 * 1000) {
   };
 }
 
+/**
+ * โต๊ะที่ส่งสัญญาณเข้ามาตั้งแต่เวลาที่กำหนด
+ *
+ * ใช้ตอบคำถามว่า "โต๊ะนี้ต่ออยู่แต่ไม่เคยส่งอะไรมาเลย ทั้งที่โต๊ะอื่นส่งอยู่" ซึ่งเป็น
+ * ลายเซ็นของ hook.js ที่ไม่ทำงานบนเครื่องนั้น — แยกจากกรณีที่ยังไม่มีใครเริ่มงาน
+ */
+export function stationsSignalledSince(t) {
+  const set = new Set();
+  for (const e of events) {
+    if (e.t >= t) set.add(e.station);
+  }
+  return set;
+}
+
+/** โต๊ะที่ส่งเหตุการณ์ชนิดนี้เข้ามาในช่วงเวลาที่กำหนด → จำนวนครั้ง */
+export function stationsWithEvent(event, ms) {
+  const out = new Map();
+  const cutoff = Date.now() - ms;
+  for (const e of events) {
+    if (e.t >= cutoff && e.event === event) out.set(e.station, (out.get(e.station) ?? 0) + 1);
+  }
+  return out;
+}
+
 /** เวลาที่ผ่านไปนับจากสัญญาณล่าสุด — ใช้ดักกรณี hook เงียบทั้งระบบ */
 export function msSinceLastSignal() {
   if (!events.length) return null;

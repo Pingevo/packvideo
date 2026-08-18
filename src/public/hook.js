@@ -300,6 +300,77 @@
     (document.head || document.documentElement).appendChild(s);
   }
 
+  /**
+   * หาป้ายของช่องสแกนเพื่อเปลี่ยน "Imei" เป็น "เลขพัสดุ"
+   *
+   * เดิมเดาโครงสร้างเดียว — `closest('tr')` แล้วหยิบ `<th>` ตัวแรก โดยมีคอมเมนต์ว่า
+   * "หน้าจริงเป็น <th> คู่กับ <td>" ซึ่งไม่เคยถูกทดสอบเลย เพราะหน้าจำลองที่ใช้ทดสอบ
+   * วางช่องไว้ใน `<p>` เฉยๆ · เดาผิดแล้วเงียบ ไม่มีใครรู้ว่าป้ายไม่เปลี่ยน
+   *
+   * ตอนนี้ลองหลายทางเรียงจากที่มั่นใจที่สุดลงไป และถ้าไม่เจอสักทางจะยิงสัญญาณบอก
+   * ไม่ปล่อยเงียบ — แถบแดงกับ placeholder ยังทำงานอยู่ดี ป้ายเป็นของแถม ไม่ใช่ตัวหลัก
+   */
+  function findLabel(el) {
+    var cands = [];
+    try {
+      if (el.id) {
+        var forEl = document.querySelector('label[for="' + el.id + '"]');
+        if (forEl) cands.push(forEl);
+      }
+      var row = el.closest && el.closest('tr');
+      if (row) {
+        var th = row.querySelector('th');
+        if (th) cands.push(th);
+        var tds = row.querySelectorAll('td');
+        for (var i = 0; i < tds.length; i++) {
+          if (!tds[i].contains(el)) { cands.push(tds[i]); break; }
+        }
+      }
+      var wrapLabel = el.closest && el.closest('label');
+      if (wrapLabel) cands.push(wrapLabel);
+      // ป้ายที่วางไว้ก่อนหน้าช่องตรงๆ — รูปแบบที่ใช้กันบ่อยเวลาไม่ได้ใช้ตาราง
+      var prev = el.previousElementSibling || (el.parentNode && el.parentNode.previousElementSibling);
+      if (prev) cands.push(prev);
+    } catch (e) { swallow(e); }
+
+    // **เปลี่ยนเฉพาะป้ายที่เขียนว่า IMEI จริงๆ เท่านั้น**
+    //
+    // เรากำลังแก้หน้าของระบบอื่น การเดาจากตำแหน่งอย่างเดียวอันตราย — บนหน้าจำลอง
+    // ที่ใช้ทดสอบ ตัวที่อยู่ก่อนช่องสแกนคือ "ผู้ใช้: tester" ซึ่งผ่านเกณฑ์โครงสร้าง
+    // ทุกข้อ ถ้าไม่กรองด้วยข้อความจะไปเปลี่ยนชื่อคนใช้งานเป็น "เลขพัสดุ" แทน
+    //
+    // ไม่เจอตัวที่เขียนว่า IMEI ก็ไม่ต้องเปลี่ยนอะไรเลย แล้วรายงานว่าทำได้ไม่ครบ —
+    // แถบแดงกับ placeholder ยังบอกอยู่ ป้ายเป็นของแถม ไม่ใช่ตัวหลัก
+    for (var j = 0; j < cands.length; j++) {
+      if (usableLabel(cands[j], el) && /imei/i.test(cands[j].textContent || '')) return cands[j];
+    }
+    return null;
+  }
+
+  /**
+   * ป้ายที่แตะได้ต้องเป็นข้อความสั้นๆ ที่ไม่มีของสำคัญอยู่ข้างใน
+   *
+   * ถ้าไม่กรอง การเขียนทับอาจไปลบทั้งเซลล์ที่มีปุ่มหรือช่องกรอกอื่นของหน้าเดิมทิ้ง
+   * — เรากำลังแก้หน้าของระบบอื่น ห้ามทำให้ของเขาพัง
+   */
+  function usableLabel(node, el) {
+    if (!node || node === el || node.nodeType !== 1) return false;
+    if (node.contains(el)) return false;
+    if (node.querySelector('input,select,textarea,button,a,img')) return false;
+    var t = (node.textContent || '').trim();
+    return t.length > 0 && t.length <= 40;
+  }
+
+  var degradedSent = false;
+
+  /** บอกเซิร์ฟเวอร์ว่าแตะหน้าเดิมได้ไม่ครบ — ยิงครั้งเดียวต่อการโหลดหน้า */
+  function reportDegraded(reason) {
+    if (degradedSent) return;
+    degradedSent = true;
+    debug('แตะหน้าเดิมได้ไม่ครบ:', reason);
+    beacon('ui_degraded', { reason: reason, trace_id: uuid() });
+  }
+
   function showWaiting(info) {
     ensureStyle();
     var bar = document.getElementById(BAR_ID);
@@ -324,10 +395,16 @@
       if (el) {
         saved.ph = el.getAttribute('placeholder');
         el.setAttribute('placeholder', 'ยิงเลขพัสดุบนกล่อง');
-        // ป้าย "Imei" ของแถวนั้น — หน้าจริงเป็น <th> คู่กับ <td> ที่มี input อยู่
-        var row = el.closest && el.closest('tr');
-        var th = row && row.querySelector('th');
-        if (th) { saved.labelEl = th; saved.label = th.textContent; th.textContent = 'เลขพัสดุ'; }
+        var lb = findLabel(el);
+        if (lb) {
+          // เก็บ innerHTML ไม่ใช่ textContent — ป้ายอาจมีลูกอยู่ข้างใน (<b>Imei</b> <span>*</span>)
+          // ถ้าเก็บแค่ข้อความแล้วคืนด้วยข้อความ โครงสร้างเดิมจะหายไปถาวร
+          saved.labelEl = lb;
+          saved.label = lb.innerHTML;
+          lb.textContent = 'เลขพัสดุ';
+        } else {
+          reportDegraded('label_not_found');
+        }
       }
       document.body.classList.add('packvideo-waiting');
     }
@@ -362,7 +439,7 @@
         if (saved.ph === null) el.removeAttribute('placeholder');
         else el.setAttribute('placeholder', saved.ph);
       }
-      if (saved.labelEl && saved.label !== null) saved.labelEl.textContent = saved.label;
+      if (saved.labelEl && saved.label !== null) saved.labelEl.innerHTML = saved.label;
       saved = null;
     }
   }

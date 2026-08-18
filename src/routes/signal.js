@@ -6,7 +6,9 @@ import * as clips from '../lib/clips.js';
 
 export const signalRouter = Router();
 
-const EVENTS = new Set(['start', 'commit', 'abort', 'tag', 'scan']);
+// ui_degraded = hook ทำงานอยู่แต่แตะหน้าเดิมได้ไม่ครบ (เช่น หาป้ายช่องสแกนไม่เจอ)
+// ต้องเป็นสัญญาณ ไม่ใช่ความเงียบ — เงียบคือสิ่งที่ทำให้บั๊กรอบก่อนอยู่ได้นาน
+const EVENTS = new Set(['start', 'commit', 'abort', 'tag', 'scan', 'ui_degraded']);
 
 /**
  * นับสัญญาณไว้ในหน่วยความจำเพื่อให้ทดสอบ hook.js ได้ตั้งแต่ตอนนี้

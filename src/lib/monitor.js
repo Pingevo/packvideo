@@ -1,5 +1,5 @@
 import { listStations } from './stations.js';
-import { commitRate, msSinceLastSignal } from './metrics.js';
+import { commitRate, msSinceLastSignal, stationsSignalledSince, stationsWithEvent } from './metrics.js';
 import { storageStatus } from './storage.js';
 import { dbState } from '../db.js';
 import { alert } from './notify.js';
@@ -19,6 +19,7 @@ const CHECK_INTERVAL_MS = 15_000;
 const MIN_COMMIT_RATE = 0.95;
 const MIN_TAG_SAMPLE = 20;          // ต่ำกว่านี้อัตราแกว่งเกินกว่าจะเชื่อ
 const SILENCE_MS = 15 * 60 * 1000;
+const HOOK_DEAD_MS = 30 * 60 * 1000;   // ต่อมานานขนาดนี้แล้วยังไม่เคยส่งอะไรเลย = ผิดปกติ
 const QUEUE_ALERT = 20;
 
 let timer = null;
@@ -53,6 +54,53 @@ export async function runChecks() {
         text: `${s.station_id} มีการพิมพ์ใบปะหน้า ${s.tag} ใบ แต่ไม่มีเครื่องต่ออยู่ — ไม่ได้บันทึกวิดีโอ`,
       });
     }
+  }
+
+  // ── 2.5 · โต๊ะที่ต่ออยู่แต่ hook.js ไม่เคยส่งสัญญาณเลย ──────
+  /**
+   * กฎที่เหลือทุกข้อมองไม่เห็นโต๊ะที่ hook.js ตายสนิท เพราะทุกข้อนับจากสัญญาณ
+   * ที่ hook.js เป็นคนส่ง — hook ตาย = tag 0 commit 0 = ไม่มีอะไรให้กฎไหนจับเลย
+   * โต๊ะขึ้นเขียวว่า "ต่ออยู่" จาก rec.html ซึ่งอยู่คนละ origin กับ hook.js
+   * หัวหน้าจึงเห็นเขียวทั้งที่ไม่มีการอัดสักคลิป — เกิดขึ้นจริงมาแล้ว
+   * (localStorage แยกตาม origin ทำให้ hook อ่าน station_id/token ไม่ได้)
+   *
+   * ลายเซ็นที่ชัดที่สุดคือ **ต่อมานานแล้วแต่ไม่เคยส่งอะไรเลย ทั้งที่โต๊ะอื่นส่งอยู่**
+   * เงื่อนไขข้อหลังสำคัญ — ถ้าไม่มีใครส่งเลยแปลว่ายังไม่มีใครเริ่มงาน ไม่ใช่โต๊ะนี้พัง
+   * และกรณีนั้นกฎข้อ 3 ดูแลอยู่แล้ว สองกฎนี้จึงเสริมกันโดยไม่เตือนซ้ำและไม่เตือนผิด
+   */
+  for (const s of connected) {
+    const since = new Date(s.claimed_at).getTime();
+    if (!Number.isFinite(since) || Date.now() - since < HOOK_DEAD_MS) continue;
+
+    const signalled = stationsSignalledSince(since);
+    if (signalled.has(s.station_id)) continue;
+
+    const others = [...signalled].filter((x) => x !== s.station_id);
+    if (!others.length) continue;   // ไม่มีใครทำงานเลย — กฎข้อ 3 รับผิดชอบกรณีนี้
+
+    findings.push({
+      level: 'error',
+      key: `hookdead:${s.station_id}`,
+      text:
+        `${s.station_id} ต่ออยู่มา ${Math.round((Date.now() - since) / 60000)} นาที ` +
+        `แต่ไม่เคยได้รับสัญญาณจาก hook.js เลยสักครั้ง ทั้งที่อีก ${others.length} โต๊ะส่งอยู่ — ` +
+        'หน้าแพ็คของเครื่องนี้อาจโหลด hook.js ไม่ได้ หรืออ่าน station_id/token ไม่ได้ ' +
+        '(ดู /bridge.html และ ALLOWED_ORIGINS)',
+    });
+  }
+
+  // ── 2.6 · hook ทำงานอยู่แต่แตะหน้าเดิมได้ไม่ครบ ─────────────
+  // สัญญาณที่ไม่มีใครดูก็เงียบพอกับไม่มีสัญญาณ — ต้องโผล่บนหน้าสถานะระบบ
+  // ระดับ warn ไม่ใช่ error เพราะการอัดยังทำงานปกติ แค่หน้าจอบอกพนักงานได้ไม่ครบ
+  for (const [stationId, n] of stationsWithEvent('ui_degraded', 60 * 60 * 1000)) {
+    findings.push({
+      level: 'warn',
+      key: `ui:${stationId}`,
+      text:
+        `${stationId} hook.js แตะหน้าแพ็คได้ไม่ครบ ${n} ครั้งในหนึ่งชั่วโมง — ` +
+        'หาป้ายช่องสแกนไม่เจอ ป้ายจึงยังเขียนว่า Imei อยู่ (แถบเตือนกับ placeholder ยังทำงาน) ' +
+        'โครงสร้างหน้าของระบบเดิมน่าจะเปลี่ยนไป',
+    });
   }
 
   // ── 3 · hook เงียบทั้งระบบ ──────────────────────────────────
