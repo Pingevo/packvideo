@@ -389,6 +389,8 @@
   if (window.PackvideoPanel) {
     PackvideoPanel.mount({
       role: 'packer',
+      // เฉพาะหน้านี้ที่มีคลิปย้อนหลัง (FR-10.9) — monitor/clips เป็นของหัวหน้ากับทีมเคลม
+      clips: true,
       hooks: {
         isRecording: function () { return !!S.clipId; },
 

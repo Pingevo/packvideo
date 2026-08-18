@@ -78,6 +78,16 @@
       '#pv-close{position:absolute;top:12px;right:14px;background:transparent;border:0;color:#8b949e;',
       'font-size:22px;line-height:1;cursor:pointer}',
       '#pv-panel a{color:#58a6ff}',
+      '#pv-clip-list{max-height:230px;overflow-y:auto;margin-top:8px;border:1px solid rgba(255,255,255,.1);border-radius:7px}',
+      '#pv-clip-list .pv-c{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.07);cursor:pointer;font-size:12px}',
+      '#pv-clip-list .pv-c:last-child{border-bottom:0}',
+      '#pv-clip-list .pv-c:hover{background:rgba(255,255,255,.05)}',
+      '#pv-clip-list .pv-c b{font-family:ui-monospace,Menlo,monospace;font-size:12px}',
+      '#pv-clip-list .pv-c span{opacity:.55}',
+      '#pv-clip-detail video{width:100%;border-radius:8px;background:#000;margin-top:10px}',
+      '#pv-clip-detail .pv-gone{background:rgba(154,103,0,.16);border:1px solid rgba(154,103,0,.45);',
+      'padding:10px;border-radius:7px;font-size:12px;margin-top:10px}',
+      '#pv-clip-detail .pv-back{background:transparent;border:0;color:#58a6ff;cursor:pointer;padding:0;font:inherit;font-size:12px}',
     ].join('');
     document.head.appendChild(s);
   }
@@ -118,6 +128,14 @@
       '</div>' +
 
       '<div class="pv-msg" id="pv-msg"></div>' +
+      (opts.clips ? (
+        '<div id="pv-clips">' +
+        '<h4>คลิปย้อนหลัง</h4>' +
+        '<input id="pv-q" type="search" placeholder="วางเลขออเดอร์ เลขพัสดุ หรือ IMEI">' +
+        '<button class="pv-act" id="pv-search" type="button">ค้นหาทุกโต๊ะ</button>' +
+        '<div id="pv-clip-list"></div>' +
+        '<div id="pv-clip-detail"></div>' +
+        '</div>') : '') +
       '<h4>คู่มือ</h4>' +
       '<p><a id="pv-help" href="/help.html" target="_blank" rel="noopener">เปิดคู่มือของงานนี้</a></p>';
     document.body.appendChild(p);
@@ -128,6 +146,12 @@
     el('pv-ask-cam').onclick = askCamera;
     el('pv-save-cam').onclick = saveCamera;
     el('pv-release').onclick = release;
+    if (opts.clips) {
+      el('pv-search').onclick = function () { searchClips(el('pv-q').value); };
+      el('pv-q').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); searchClips(el('pv-q').value); }
+      });
+    }
     el('pv-help').href = '/help.html' + (HELP[opts.role] || '');
 
     document.addEventListener('keydown', function (e) {
@@ -326,6 +350,179 @@
     setTimeout(function () { location.reload(); }, 900);
   }
 
+  // ── คลิปย้อนหลัง (FR-12) ──────────────────────────────────
+  /**
+   * ใครเป็นคนทำ — ระบุจากโต๊ะและชื่อเครื่อง ไม่ถามให้พิมพ์เอง
+   *
+   * หน้าค้นคลิปของทีมเคลมถามชื่อแล้วจำไว้ ซึ่งเหมาะกับคนที่นั่งโต๊ะตัวเอง แต่โต๊ะแพ็ค
+   * เปลี่ยนคนตามกะ ถ้าถามให้พิมพ์จะได้ชื่อคนกะก่อนติดค้างไปตลอด — ผูกกับโต๊ะแทน
+   * ซึ่งเป็นความจริงที่ตรวจสอบย้อนได้เสมอ
+   *
+   * ค่านี้จะถูกแทนที่ด้วยตัวตนจาก token เมื่อทำ auth ฝั่งเซิร์ฟเวอร์ (C-5) — ตอนนั้น
+   * เซิร์ฟเวอร์จะไม่เชื่อค่าที่ส่งมาจากหน้าจออีก แต่รูปแบบการเรียกไม่ต้องเปลี่ยน
+   */
+  function actor() {
+    var st = get(K.station) || 'ไม่ทราบโต๊ะ';
+    var dev = get(K.device);
+    return 'โต๊ะ ' + st + (dev ? ' · ' + dev : '');
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }); }
+    catch (e) { return iso; }
+  }
+
+  function clipRow(c) {
+    return '<div class="pv-c" data-id="' + esc(c.clip_id) + '">' +
+      '<b>' + esc(c.ordersn || c.tracking_no || c.clip_id) + '</b>' +
+      (c.pinned ? ' 📌' : '') +
+      '<br><span>' + esc(fmtTime(c.started_at)) + ' · ' + esc(c.status) +
+      ' · ' + esc(c.station_id) + '</span></div>';
+  }
+
+  function bindRows() {
+    [].forEach.call(document.querySelectorAll('#pv-clip-list .pv-c'), function (r) {
+      r.onclick = function () { openClip(r.getAttribute('data-id')); };
+    });
+  }
+
+  function listInto(url, emptyText) {
+    el('pv-clip-detail').innerHTML = '';
+    el('pv-clip-list').innerHTML = '<div class="pv-c"><span>กำลังโหลด…</span></div>';
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { el('pv-clip-list').innerHTML = '<div class="pv-c"><span>' + esc(d.error) + '</span></div>'; return; }
+        var list = d.clips || [];
+        el('pv-clip-list').innerHTML = list.length
+          ? list.map(clipRow).join('')
+          : '<div class="pv-c"><span>' + esc(emptyText) + '</span></div>';
+        bindRows();
+      })
+      .catch(function () {
+        el('pv-clip-list').innerHTML = '<div class="pv-c"><span>ติดต่อเซิร์ฟเวอร์ไม่ได้</span></div>';
+      });
+  }
+
+  /**
+   * รายการเริ่มต้น = เฉพาะโต๊ะนี้ (FR-12.1)
+   *
+   * ตอนนี้กรองด้วย query string ซึ่งฝั่งหน้าจอเป็นคนบอกว่าตัวเองคือโต๊ะไหน — ยังไม่ใช่
+   * ขอบเขตจริง ใครเปิด DevTools ก็เปลี่ยนได้ · เมื่อทำ C-5 เซิร์ฟเวอร์จะอ่านโต๊ะจาก
+   * token แทนแล้วเมินค่าที่ส่งมา รูปแบบการเรียกยังเหมือนเดิม ไม่ต้องรื้อ
+   */
+  function loadMyClips() {
+    var st = get(K.station);
+    if (!st) return;
+    listInto('/api/search?limit=30&station=' + encodeURIComponent(st),
+      'ยังไม่มีคลิปของโต๊ะนี้');
+  }
+
+  /** ค้นด้วยเลข = ครอบคลุมทุกโต๊ะ (FR-12.2) เพราะเคสที่ถูกทักมักไม่ใช่ออเดอร์ที่ตัวเองแพ็ค */
+  function searchClips(q) {
+    q = (q || '').trim();
+    if (!q) return loadMyClips();
+    listInto('/api/search?limit=30&q=' + encodeURIComponent(q), 'ไม่พบคลิปที่ตรงกับเลขนี้');
+  }
+
+  function openClip(id) {
+    var box = el('pv-clip-detail');
+    box.innerHTML = '<div style="font-size:12px;opacity:.6;padding:8px 0">กำลังโหลด…</div>';
+    fetch('/api/search/' + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { box.innerHTML = '<div class="pv-gone">' + esc(d.error) + '</div>'; return; }
+        renderClip(d.clip);
+      })
+      .catch(function () { box.innerHTML = '<div class="pv-gone">ติดต่อเซิร์ฟเวอร์ไม่ได้</div>'; });
+  }
+
+  function renderClip(c) {
+    var box = el('pv-clip-detail');
+    // NFR-10.6 — ดูคลิปเก่าต้องไม่ไปแย่งแบนด์วิดท์กับการส่งคลิปที่ยังค้างอยู่
+    var backlog = lockInfo && lockInfo.queue_depth > 5;
+
+    var player = c.media_available
+      ? (backlog
+          ? '<div class="pv-gone"><b>ยังมีคลิปค้างส่ง ' + esc(String(lockInfo.queue_depth)) + ' ตัว</b><br>' +
+            'เปิดดูตอนนี้จะไปแย่งเน็ตกับการส่งคลิปที่อัดไว้ รอให้ส่งหมดก่อนดีกว่า' +
+            '<br><button class="pv-back" id="pv-play-anyway" type="button">ดูเลย</button></div>'
+          : '<video controls preload="metadata" playsinline src="' + esc(c.media_url) + '"></video>')
+      // "เคยมีแต่ถูกลบ" ต้องต่างจาก "ไม่เคยมี" ให้ชัด (FR-12.11)
+      : '<div class="pv-gone"><b>ไม่มีไฟล์วิดีโอแล้ว</b><br>' +
+        (c.media_deleted_at
+          ? 'คลิปนี้เคยมีอยู่จริง และถูกลบตามกำหนดเก็บเมื่อ ' + esc(fmtTime(c.media_deleted_at))
+          : 'คลิปนี้ไม่มีไฟล์บันทึกไว้ อาจเป็นเพราะกล้องไม่ทำงานตอนนั้น') + '</div>';
+
+    box.innerHTML =
+      '<button class="pv-back" id="pv-back" type="button">← กลับไปรายการ</button>' +
+      player +
+      '<div class="pv-row"><span>ออเดอร์</span><span>' + esc(c.ordersn || '—') + '</span></div>' +
+      '<div class="pv-row"><span>เลขพัสดุ</span><span>' + esc(c.tracking_no || '—') + '</span></div>' +
+      '<div class="pv-row"><span>โต๊ะ</span><span>' + esc(c.station_id) + '</span></div>' +
+      '<div class="pv-row"><span>เมื่อ</span><span>' + esc(fmtTime(c.started_at)) + '</span></div>' +
+      '<div class="pv-row"><span>สถานะ</span><span>' + esc(c.status) + '</span></div>' +
+      (c.media_available ? '<button class="pv-act" id="pv-dl" type="button">ดาวน์โหลดไฟล์คลิป</button>' : '') +
+      (c.pinned
+        // FR-12.7 — ไม่มีปุ่มถอนตรึง คนที่ถูกกล่าวหาต้องถอนตรึงหลักฐานของเคสตัวเองไม่ได้
+        ? '<div style="font-size:12px;opacity:.7;margin-top:8px">📌 ตรึงไว้แล้ว — ' +
+          'จะไม่ถูกลบตามกำหนด · ถอนตรึงได้ที่ทีมเคลมเท่านั้น</div>'
+        : '<button class="pv-act" id="pv-pin" type="button">ตรึงไว้ไม่ให้ถูกลบ</button>');
+
+    el('pv-back').onclick = function () { box.innerHTML = ''; };
+    var playAnyway = el('pv-play-anyway');
+    if (playAnyway) playAnyway.onclick = function () {
+      playAnyway.parentNode.outerHTML =
+        '<video controls preload="metadata" playsinline src="' + esc(c.media_url) + '"></video>';
+    };
+    if (el('pv-dl')) el('pv-dl').onclick = function () { download(c, this); };
+    if (el('pv-pin')) el('pv-pin').onclick = function () { pin(c); };
+  }
+
+  function download(c, btn) {
+    btn.disabled = true; btn.textContent = 'กำลังเตรียมไฟล์…';
+    var reset = function () { btn.disabled = false; btn.textContent = 'ดาวน์โหลดไฟล์คลิป'; };
+    fetch('/api/clips/' + encodeURIComponent(c.clip_id) + '/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ by: actor() }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { reset(); return msg('bad', d.error || 'เตรียมไฟล์ไม่สำเร็จ'); }
+        btn.textContent = 'กำลังดาวน์โหลด…';
+        return fetch(d.download_url).then(function (r) {
+          if (!r.ok) throw new Error('ดาวน์โหลดไม่สำเร็จ (HTTP ' + r.status + ')');
+          return r.blob();
+        }).then(function (blob) {
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = (c.ordersn || c.tracking_no || c.clip_id) + '.mp4';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+          reset();
+          msg('ok', 'บันทึกไฟล์แล้ว — ' + d.duration_sec + ' วินาที · ' + d.mb + ' MB');
+        });
+      })
+      .catch(function (e) { reset(); msg('bad', e.message); });
+  }
+
+  function pin(c) {
+    var note = prompt('ตรึงไว้เพราะอะไร (เช่น โดนทักว่าของขาด)', '') || '';
+    fetch('/api/clips/' + encodeURIComponent(c.clip_id) + '/pin', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ by: actor(), note: note }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) return msg('bad', d.error || 'ตรึงไม่สำเร็จ');
+        msg('ok', 'ตรึงไว้แล้ว — จะไม่ถูกลบตามกำหนด');
+        openClip(c.clip_id);
+      })
+      .catch(function () { msg('bad', 'ติดต่อเซิร์ฟเวอร์ไม่ได้'); });
+  }
+
   // ── เปิด/ปิด ──────────────────────────────────────────────
   function show() {
     open = true;
@@ -336,6 +533,7 @@
     renderCurrent();
     loadStations();
     refreshLock();
+    if (opts.clips) { el('pv-q').value = ''; loadMyClips(); }
     // FR-11.3 — ปลดล็อกเองเมื่อคลิปปิด ไม่ต้องปิด-เปิดแผงใหม่
     lockTimer = setInterval(refreshLock, 3000);
   }

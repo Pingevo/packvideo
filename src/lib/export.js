@@ -115,6 +115,18 @@ export async function exportClip(clipId, opts = {}) {
   try {
     const cached = await fs.stat(outPath);
     if (cached.size > 0) {
+      // ต้องบันทึกด้วยว่าใครโหลดแม้เป็นไฟล์ที่เคยสร้างไว้แล้ว
+      //
+      // เดิมทางลัดนี้ return ออกไปเลยโดยไม่บันทึกอะไร ผลคือการโหลดครั้งที่สองเป็นต้นไป
+      // ไม่มีร่องรอยเลย — NFR-4.7 บอกว่าต้องตอบได้ว่าคลิปหนึ่งถูกเปิดเผยให้ใครไปแล้วบ้าง
+      // ซึ่งตอบไม่ได้จริงถ้านับเฉพาะครั้งแรก · สำคัญขึ้นอีกเมื่อคนแพ็คโหลดเองได้ (FR-12.5)
+      void appendEvent({
+        clip_id: clipId,
+        event: 'export',
+        ordersn: clip.ordersn ?? null,
+        actor: opts.actor ?? null,
+        detail: { start_ms: startMs, duration_sec: durationSec, bytes: cached.size, cached: true },
+      });
       return { ok: true, cached: true, path: outPath, name, bytes: cached.size,
                start_ms: startMs, duration_sec: durationSec };
     }
