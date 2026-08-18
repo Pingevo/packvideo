@@ -310,7 +310,18 @@
       'font-weight:700;letter-spacing:1px;background:#fff;color:#b3261e;padding:2px 12px;border-radius:5px}' +
       '#' + BAR_ID + ' .pv-left{margin-left:auto;font-size:13px;opacity:.9;white-space:nowrap}' +
       'body.packvideo-waiting #txt_imei{outline:3px solid #b3261e!important;background:#fff5f5!important;' +
-      'font-family:ui-monospace,Menlo,Consolas,monospace!important}';
+      'font-family:ui-monospace,Menlo,Consolas,monospace!important}' +
+      // แถบสถานะมุมขวาล่าง — ป้ายเลือกโต๊ะของ sellcenter อยู่มุมซ้ายล่าง ต้องไม่ทับกัน
+      '#' + PILL_ID + '{position:fixed;right:14px;bottom:14px;z-index:99997;display:flex;' +
+      'align-items:center;gap:9px;padding:7px 13px;border-radius:20px;border:0;cursor:default;' +
+      'font:12px system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;' +
+      'background:#1a1a1a;color:#eee;box-shadow:0 2px 10px rgba(0,0,0,.3);opacity:.9}' +
+      '#' + PILL_ID + '.pv-bad{background:#b3261e;color:#fff;cursor:pointer;opacity:1;' +
+      'font-size:13px;font-weight:700}' +
+      '#' + PILL_ID + '.pv-warn{background:#9a6700;color:#fff;opacity:1}' +
+      '#' + PILL_ID + ' .pv-live{width:9px;height:9px;border-radius:50%;background:#2da44e;' +
+      'animation:pv-blink 1.6s steps(1) infinite}' +
+      '#' + PILL_ID + '.pv-bad .pv-live,#' + PILL_ID + '.pv-warn .pv-live{background:#fff;animation:none}';
     (document.head || document.documentElement).appendChild(s);
   }
 
@@ -383,6 +394,132 @@
     degradedSent = true;
     debug('แตะหน้าเดิมได้ไม่ครบ:', reason);
     beacon('ui_degraded', { reason: reason, trace_id: uuid() });
+  }
+
+  // ── แถบสถานะถาวร + เปิดหน้าต่างอัดให้เอง ────────────────────
+  /**
+   * เอา "สถานะ" มาไว้ในหน้าที่พนักงานมองอยู่ ไม่ใช่เอา "กล้อง" มา
+   *
+   * ฝังตัวอัดเป็น iframe ในหน้านี้ไม่ได้ เพราะหน้าแพ็คเปลี่ยนหน้าจริงระหว่างแพ็ค
+   * หนึ่งออเดอร์ (imei → ใบปะหน้า → กลับมา imei) ทุกครั้งที่เปลี่ยนหน้า iframe
+   * ถูกทำลาย MediaRecorder ตายตาม คลิปจะขาดตรงจังหวะหยิบของใส่กล่องพอดี ซึ่งเป็น
+   * วินาทีที่มีค่าที่สุดของหลักฐาน — หน้าต่างอัดจึงต้องแยกและอยู่ยาวตลอดกะ
+   *
+   * สิ่งที่ทำได้และทำตรงนี้คือ ทำให้พนักงานไม่ต้องคอยจำว่าหน้าต่างนั้นเปิดอยู่ไหม
+   */
+  var PILL_ID = 'packvideo-status';
+  var STATUS_POLL_MS = 30000;
+  var statusTimer = null;
+  var lastStatus = null;
+  var autoOpenTried = false;
+
+  function deskUrl() { return BASE + '/api/desk/' + encodeURIComponent(station); }
+
+  /**
+   * เปิดหน้าต่างอัด
+   *
+   * ตั้งชื่อหน้าต่างไว้ เรียกซ้ำจะไปโฟกัสอันเดิมแทนการเปิดใหม่ซ้อน · เรียกเฉพาะตอนที่
+   * โต๊ะยังไม่มีใครถืออยู่เท่านั้น ไม่งั้นเครื่องสแกนจะไปแย่งโต๊ะจากเครื่องที่ต่อกล้องอยู่
+   */
+  var lastOpenAt = 0;
+
+  function openRecorder() {
+    try {
+      // กันเปิดซ้ำติดๆ กัน — หน้าต่างมีชื่อจึงเป็นตัวเดิม แต่การเรียกซ้ำจะสั่งให้มัน
+      // โหลดใหม่ ซึ่งถ้าเผอิญเริ่มอัดไปแล้วก็คือทำคลิปที่กำลังอัดขาด
+      if (Date.now() - lastOpenAt < 5000) return true;
+      lastOpenAt = Date.now();
+      var w = window.open(BASE + '/rec.html', 'packvideo-rec');
+      if (!w) return false;          // ตัวบล็อกป๊อปอัปกัน — ปล่อยให้ปุ่มบนแถบเป็นทางสำรอง
+      setTimeout(pollStatus, 3000);  // ให้แถบอัปเดตเร็วกว่ารอบปกติ
+      return true;
+    } catch (e) { swallow(e); return false; }
+  }
+
+  /**
+   * ลองเปิดให้เองครั้งเดียวตอนที่พนักงานแตะหน้าจอครั้งแรก
+   *
+   * ต้องผูกกับการกดจริง เพราะ window.open นอก user gesture โดนบล็อกเกือบทุกเบราว์เซอร์
+   * การสแกนบาร์โค้ดคือการกดคีย์บอร์ด จึงนับเป็น gesture อยู่แล้วโดยไม่ต้องขออะไรเพิ่ม
+   */
+  function armAutoOpen() {
+    function once(ev) {
+      if (autoOpenTried) return cleanup();
+      // การกดที่แถบมีตัวจัดการของมันเองแล้ว ถ้าไม่ข้ามจะเปิดสองครั้งต่อการกดหนึ่งที
+      if (ev && ev.target && ev.target.closest && ev.target.closest('#' + PILL_ID)) return;
+      if (!lastStatus || lastStatus.connected !== false) return;   // ยังไม่รู้สถานะ หรือเปิดอยู่แล้ว
+      autoOpenTried = true;
+      openRecorder();
+      cleanup();
+    }
+    function cleanup() {
+      try {
+        document.removeEventListener('keydown', once, true);
+        document.removeEventListener('click', once, true);
+      } catch (e) {}
+    }
+    try {
+      document.addEventListener('keydown', once, true);
+      document.addEventListener('click', once, true);
+    } catch (e) { swallow(e); }
+  }
+
+  function renderPill(st) {
+    if (!UI_ENABLED) return;
+    ensureStyle();
+    var el = document.getElementById(PILL_ID);
+    if (!el) {
+      el = document.createElement('button');
+      el.id = PILL_ID;
+      el.type = 'button';
+      el.onclick = function () { if (lastStatus && !lastStatus.connected) openRecorder(); };
+      document.body.appendChild(el);
+    }
+
+    var cls = '', text;
+    if (!st) {
+      cls = 'pv-warn';
+      text = 'ติดต่อระบบวิดีโอไม่ได้';
+    } else if (!st.connected) {
+      cls = 'pv-bad';
+      text = 'หน้าต่างอัดไม่ได้เปิด — กดตรงนี้เพื่อเปิด';
+    } else if (!st.recording_allowed) {
+      cls = 'pv-warn';
+      text = 'ดิสก์เต็ม หยุดบันทึกชั่วคราว · ' + st.station_id;
+    } else {
+      text = 'กำลังอัด · ' + st.station_id
+        + (st.disk_level && st.disk_level !== 'normal' ? ' · ดิสก์เหลือ ' + st.disk_free_gb + ' GB' : '')
+        + (st.queue_depth > 0 ? ' · คิว ' + st.queue_depth : '');
+    }
+    el.className = cls;
+    el.innerHTML = '<span class="pv-live"></span><span></span>';
+    el.lastChild.textContent = text;
+  }
+
+  function pollStatus() {
+    try {
+      if (!window.fetch) return;
+      fetch(deskUrl(), { credentials: 'omit' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          lastStatus = d && d.ok ? d : null;
+          renderPill(lastStatus);
+        })
+        .catch(function () { lastStatus = null; renderPill(null); });
+    } catch (e) { swallow(e); }
+  }
+
+  function startStatus() {
+    if (!UI_ENABLED || statusTimer) return;
+    pollStatus();
+    statusTimer = setInterval(pollStatus, STATUS_POLL_MS);
+    // กลับมาที่แท็บนี้แล้วต้องเห็นของจริงทันที ไม่ใช่ค่าค้างจากเมื่อกี้
+    try {
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) pollStatus();
+      });
+    } catch (e) { swallow(e); }
+    armAutoOpen();
   }
 
   function showWaiting(info) {
@@ -601,6 +738,7 @@
       bindKey();
       if (isLabelPage()) onLabelPage();
       startUi();
+      startStatus();
       debug('ทำงานที่โต๊ะ', station, '· ดักเลขพัสดุ:', INTERCEPT_TRACKING ? 'เปิด' : 'ปิด');
     } catch (err) { swallow(err); }
   }
