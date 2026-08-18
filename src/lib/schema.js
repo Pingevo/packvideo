@@ -26,6 +26,7 @@ export async function ensureIndexes() {
   // ที่ 1,500 คลิป/วัน × 30 วัน = 45,000 เอกสาร การ scan ทั้ง collection ยอมรับไม่ได้
   created.push(await idx(db, COL.clips, { ordersn: 1 }, { name: 'ordersn', sparse: true }));
   created.push(await idx(db, COL.clips, { tracking_no: 1 }, { name: 'tracking_no', sparse: true }));
+  created.push(await idx(db, COL.clips, { project_id: 1 }, { name: 'project_id', sparse: true }));
   created.push(await idx(db, COL.clips, { imeis: 1 }, { name: 'imeis', sparse: true }));
 
   // งาน retention กวาดทีละวัน (design §9.1) และหน้า monitor ดูรายโต๊ะรายวัน

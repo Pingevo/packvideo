@@ -12,6 +12,69 @@
   'use strict';
 
   var API_PATH = '/shopee/imei/get_order_new';   // จุดเกาะหลัก: สัญญาของ API ไม่ใช่โครงสร้างหน้า
+
+  /**
+   * งาน KOL — คนละจังหวะกับ shopee ทั้งหมด
+   *
+   *   shopee : ยิง IMEI 1 ครั้ง = 1 ออเดอร์ = 1 คลิป · ปิดด้วยการยิงเลขพัสดุ
+   *   KOL    : ยิงหลายชิ้นลงกล่องเดียว เลขพัสดุมาตอนท้ายหลังกดลงทะเบียนจัดส่ง
+   *            และ**ไม่มีขั้นตอนยิงเลขพัสดุปิดเลย**
+   *
+   * จึงเป็นหนึ่งคลิปต่อโปรเจกต์ — เริ่มตอนยิงชิ้นแรก อัดยาวคลุมทุกชิ้น ปิดตอน
+   * ลงทะเบียนจัดส่งสำเร็จ ซึ่งเป็นจังหวะที่กล่องถูกปิดและได้เลขพัสดุจริง
+   */
+  var KOL_ADD_PATH = '/kol/shipping/add';
+  var KOL_REGIS_PATH = '/kol/shipping/regis';
+  var KOL_OPEN_KEY = 'packvideo.kol_open';
+  var KOL_TTL_MS = 60 * 60 * 1000;   // เกินชั่วโมงถือว่าคนละรอบงาน เริ่มคลิปใหม่
+
+  /** โปรเจกต์นี้มีคลิปเปิดค้างอยู่แล้วหรือยัง — ต้องข้ามการรีโหลดหน้าได้ */
+  function kolHasOpen(projectId) {
+    try {
+      var raw = localStorage.getItem(KOL_OPEN_KEY);
+      if (!raw) return false;
+      var o = JSON.parse(raw);
+      if (!o || o.p !== projectId || Date.now() - o.at > KOL_TTL_MS) return false;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function kolMarkOpen(projectId) {
+    try { localStorage.setItem(KOL_OPEN_KEY, JSON.stringify({ p: projectId, at: Date.now() })); }
+    catch (e) { swallow(e); }
+  }
+
+  function kolClearOpen() {
+    try { localStorage.removeItem(KOL_OPEN_KEY); } catch (e) {}
+  }
+
+  function onKolScan(data) {
+    var projectId = fieldFrom(data, 'project_id');
+    var imei = fieldFrom(data, 'imei');
+    var user = fieldFrom(data, 'user');
+    if (!projectId) return;
+
+    if (kolHasOpen(projectId)) {
+      // ชิ้นถัดไปของกล่องเดิม — ห้ามยิง start ไม่งั้นเซิร์ฟเวอร์จะปิดคลิปเดิมทิ้ง
+      beacon('item', { value: imei, trace_id: uuid() });
+      return;
+    }
+    ctx = { trace_id: uuid(), at: Date.now() };
+    beacon('start', { trace_id: ctx.trace_id, value: imei, user: user });
+    kolMarkOpen(projectId);
+    guessRecording(true);
+  }
+
+  function onKolRegistered(data, result) {
+    var trackingNo = (result && (result.tracking_no || (result.data && result.data.tracking_no))) || null;
+    beacon('ship', {
+      trace_id: uuid(),
+      tracking_no: trackingNo,
+      project_id: fieldFrom(data, 'project_id'),
+    });
+    kolClearOpen();
+    guessRecording(false);
+  }
   var DEDUPE_MS = 2000;
   var VERSION = '0.1.0';
 
@@ -150,14 +213,22 @@
 
       $(document).ajaxSend(function (e, xhr, opts) {
         try {
-          if (!opts || String(opts.url).indexOf(API_PATH) === -1) return;
+          if (!opts) return;
+          if (String(opts.url).indexOf(KOL_ADD_PATH) !== -1) return onKolScan(opts.data);
+          if (String(opts.url).indexOf(API_PATH) === -1) return;
           onScan(fieldFrom(opts.data, 'imei'), fieldFrom(opts.data, 'user'));
         } catch (err) { swallow(err); }
       });
 
       $(document).ajaxSuccess(function (e, xhr, opts, data) {
         try {
-          if (!opts || String(opts.url).indexOf(API_PATH) === -1) return;
+          if (!opts) return;
+          // ลงทะเบียนจัดส่งสำเร็จ = กล่องปิดแล้ว ได้เลขพัสดุแล้ว → ปิดคลิป
+          if (String(opts.url).indexOf(KOL_REGIS_PATH) !== -1) {
+            if (data && data.success) onKolRegistered(opts.data, data);
+            return;
+          }
+          if (String(opts.url).indexOf(API_PATH) === -1) return;
           onResult(data);
         } catch (err) { swallow(err); }
       });

@@ -8,7 +8,8 @@ export const signalRouter = Router();
 
 // ui_degraded = hook ทำงานอยู่แต่แตะหน้าเดิมได้ไม่ครบ (เช่น หาป้ายช่องสแกนไม่เจอ)
 // ต้องเป็นสัญญาณ ไม่ใช่ความเงียบ — เงียบคือสิ่งที่ทำให้บั๊กรอบก่อนอยู่ได้นาน
-const EVENTS = new Set(['start', 'commit', 'abort', 'tag', 'scan', 'ui_degraded']);
+// item/ship = งาน KOL ที่แพ็คหลายชิ้นลงกล่องเดียว แล้วปิดตอนลงทะเบียนจัดส่ง
+const EVENTS = new Set(['start', 'commit', 'abort', 'tag', 'scan', 'ui_degraded', 'item', 'ship']);
 
 /**
  * นับสัญญาณไว้ในหน่วยความจำเพื่อให้ทดสอบ hook.js ได้ตั้งแต่ตอนนี้
@@ -105,6 +106,14 @@ async function dispatch(event, b, stationId) {
         stationId,
         trackingNo: b.tracking_no || null,
         user: b.user ?? null,
+      });
+    case 'item':
+      return clips.item({ stationId, imei: b.value ?? null });
+    case 'ship':
+      return clips.shipRegistered({
+        stationId,
+        trackingNo: b.tracking_no || null,
+        projectId: b.project_id || null,
       });
     case 'scan':
       return clips.scan({ stationId, value: b.value ?? '' });

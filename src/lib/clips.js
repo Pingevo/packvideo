@@ -204,11 +204,47 @@ export async function scan({ stationId, value }) {
 // ── CLOSE ─────────────────────────────────────────────────────
 /**
  * @param {string} clipId
- * @param {'verified'|'manual_stop'|'unverified'|'timeout'} status
+ * @param {'verified'|'registered'|'manual_stop'|'unverified'|'timeout'} status
  */
+/**
+ * เพิ่มชิ้นที่สแกนเข้าไปในคลิปที่เปิดอยู่ โดยไม่ปิดแล้วเปิดใหม่
+ *
+ * งาน KOL แพ็คหลายชิ้นลงกล่องเดียว พนักงานยิงทีละชิ้นจนครบ ถ้าใช้ start ทุกครั้ง
+ * คลิปจะถูกตัดเป็นท่อนๆ ตัวก่อนหน้าปิดเป็น unverified หมด — และช่วงต่อระหว่างชิ้น
+ * ซึ่งเป็นช่วงที่คนอ้างว่าของหายจะหายไปพอดี
+ */
+export function item({ stationId, imei }) {
+  const clip = openClipOf(stationId);
+  if (!clip) return null;
+  if (imei && !clip.imeis.includes(imei)) clip.imeis.push(imei);
+  touch(clip);
+  persist(clip, 'item', { imei });
+  log.info({ clip_id: clip._id, imei, count: clip.imeis.length }, 'เพิ่มชิ้นเข้าคลิป');
+  return clip;
+}
+
+/**
+ * ลงทะเบียนจัดส่งแล้ว = กล่องถูกปิดและได้เลขพัสดุ → ปิดคลิป
+ *
+ * ปิดด้วยสถานะ `registered` ไม่ใช่ `verified` เพราะสองอย่างนี้ไม่เท่ากัน —
+ * `verified` แปลว่าพนักงานยิงบาร์โค้ดบนใบปะหน้าจริงแล้วตรงกับคลิป ส่วนอันนี้เรา
+ * เอาเลขมาจากคำตอบของ API ตอนลงทะเบียน ไม่มีการยิงบาร์โค้ดยืนยัน
+ * ถ้าเรียกว่า verified เหมือนกันคือโม้คุณภาพหลักฐานให้ดูดีกว่าความจริง
+ */
+export async function shipRegistered({ stationId, trackingNo, projectId }) {
+  const clip = openClipOf(stationId);
+  if (!clip) return null;
+  if (trackingNo) clip.tracking_no = trackingNo;
+  if (projectId) clip.project_id = projectId;
+  touch(clip);
+  persist(clip, 'ship', { tracking_no: trackingNo, project_id: projectId });
+  log.info({ clip_id: clip._id, tracking_no: trackingNo, project_id: projectId }, 'ลงทะเบียนจัดส่งแล้ว ปิดคลิป');
+  return close(clip._id, 'registered');
+}
+
 export async function close(clipId, status, note) {
   const clip = clips.get(clipId);
-  if (!clip || ['aborted', 'verified', 'manual_stop', 'unverified', 'timeout'].includes(clip.status)) {
+  if (!clip || CLOSED.includes(clip.status)) {
     return clip ?? null;
   }
 
@@ -255,7 +291,7 @@ export async function close(clipId, status, note) {
  * ทำแบบนี้แทนการต่อท้ายไฟล์เดียว เพราะชิ้นที่มาซ้ำหรือมาสลับลำดับ (เกิดได้ตอน
  * เน็ตสะดุดแล้วฝั่งเครื่องส่งใหม่) จะไม่ทำให้ไฟล์เสีย — เขียนทับชิ้นเดิมเฉยๆ
  */
-const CLOSED = ['aborted', 'verified', 'manual_stop', 'unverified', 'timeout'];
+const CLOSED = ['aborted', 'verified', 'registered', 'manual_stop', 'unverified', 'timeout'];
 
 export async function putChunk(clipId, seq, buffer) {
   const clip = clips.get(clipId);
@@ -336,6 +372,9 @@ export function toMetadata(clip) {
     status: clip.status,
     ordersn: clip.ordersn,
     tracking_no: clip.tracking_no,
+    // งาน KOL ผูกคลิปกับโปรเจกต์ ไม่ใช่ออเดอร์ · saveClip เขียนจากผลของฟังก์ชันนี้
+    // อย่างเดียว ไม่ส่งออกตรงนี้ = ไม่ถูกเก็บลงฐานข้อมูลเลย
+    project_id: clip.project_id ?? null,
     imeis: clip.imeis,
     flags: clip.flags,
     pinned: clip.pinned,
@@ -398,10 +437,22 @@ export async function closeStation(stationId, reason) {
  * ไม่ await ในเส้นทางหลัก — ฐานข้อมูลช้าหรือล่มต้องไม่หน่วงการอัด
  * ไฟล์กับ JSON คู่ยังถูกเขียนตามปกติอยู่แล้ว ฐานข้อมูลเป็นแค่ index (D4)
  */
+/**
+ * คิวการเขียนต่อคลิปหนึ่งตัว — เขียนทีละคำสั่ง ไม่ยิงขนานกัน
+ *
+ * ของเดิมยิง saveClip ทิ้งแบบขนาน ซึ่งพังทันทีที่มีเหตุการณ์ติดกันเร็วๆ เพราะ
+ * mongo ไม่รับประกันลำดับของ updateOne ที่ค้างอยู่พร้อมกัน — เอกสารที่เขียนทีหลัง
+ * แต่ถือ snapshot เก่ากว่าจะทับตัวที่ใหม่กว่าทิ้ง
+ *
+ * เจอจริงตอนทำ flow KOL: ยิง 4 ชิ้นรัวแล้วปิดคลิป ผลคือฐานข้อมูลได้ imeis ครบ
+ * ทั้ง 4 แต่สถานะค้างที่ pending ทั้งที่ปิดไปแล้ว — ทีมเคลมค้นเจอคลิปที่ดูเหมือน
+ * ยังอัดไม่จบ ทั้งที่ไฟล์ปิดเรียบร้อยแล้ว
+ */
+const writeChain = new Map();
+
 function persist(clip, event, detail) {
   const meta = toMetadata(clip);
-  void repo.saveClip(meta);
-  void repo.appendEvent({
+  const evt = {
     clip_id: clip._id,
     event,
     station_id: clip.station_id,
@@ -409,6 +460,16 @@ function persist(clip, event, detail) {
     tracking_no: clip.tracking_no ?? null,
     actor: clip.packer ?? null,
     detail: detail ?? null,
+  };
+
+  const prev = writeChain.get(clip._id) ?? Promise.resolve();
+  const next = prev
+    .then(() => repo.saveClip(meta))
+    .then(() => repo.appendEvent(evt))
+    .catch(() => {});          // repo บันทึก error เองแล้ว ห้ามให้คิวขาดตรงนี้
+  writeChain.set(clip._id, next);
+  void next.then(function () {
+    if (writeChain.get(clip._id) === next) writeChain.delete(clip._id);
   });
 }
 
