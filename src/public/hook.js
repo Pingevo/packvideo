@@ -14,6 +14,28 @@
   var API_PATH = '/shopee/imei/get_order_new';   // จุดเกาะหลัก: สัญญาของ API ไม่ใช่โครงสร้างหน้า
 
   /**
+   * Lazada — คนละหน้าตากับ shopee: /lazada/imei ไม่เรียก get_order_new เลย
+   * มันยิง check_low_price แล้ว redirect เต็มหน้าไป /lazada/imei/airway/... เสมอ
+   * ไม่มี AJAX endpoint ไหนที่คืน ordersn ตรง ๆ ให้เกาะแบบ shopee ได้
+   *
+   * check_low_price ตอบ {found, is_low_price, is_clearance_low_price} ซึ่งพอจะแปลงเป็น
+   * รูปที่ decide() ของ shopee เข้าใจได้อยู่แล้ว (found ทำหน้าที่แทน ordersn) จึงเกาะจุดนี้
+   * แทน ไม่ต้องเขียน decide() ใหม่ซ้ำ — ยังไม่ครอบคลุมเคส "ราคาต่ำกว่าทุนแบบ clearance
+   * แล้วพนักงานกด Cancel ที่ popup" เพราะ AJAX ตอบก่อน popup จะขึ้น รู้แค่ว่าเจอ imei
+   * ไม่รู้ว่าสุดท้ายพนักงานกดไปต่อหรือไม่ — ยอมรับช่องว่างนี้ไว้ก่อน (เหมือน shopee เดิม)
+   */
+  var LAZ_CHECK_PATH = '/lazada/imei/check_low_price';
+
+  function decideLazadaCheck(r) {
+    if (!r || typeof r !== 'object') return { ordersn: null };
+    return {
+      ordersn: r.found === true ? 'lazada-imei-found' : null,
+      is_low_price: r.is_low_price === true,
+      is_cancelled: false,
+    };
+  }
+
+  /**
    * งาน KOL — คนละจังหวะกับ shopee ทั้งหมด
    *
    *   shopee : ยิง IMEI 1 ครั้ง = 1 ออเดอร์ = 1 คลิป · ปิดด้วยการยิงเลขพัสดุ
@@ -224,6 +246,9 @@
         try {
           if (!opts) return;
           if (String(opts.url).indexOf(KOL_ADD_PATH) !== -1) return onKolScan(opts.data);
+          if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1) {
+            return onScan(fieldFrom(opts.data, 'imei'), fieldFrom(opts.data, 'user'));
+          }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
           onScan(fieldFrom(opts.data, 'imei'), fieldFrom(opts.data, 'user'));
         } catch (err) { swallow(err); }
@@ -241,6 +266,9 @@
             if (data && data.success) onKolPhoto(opts.data);
             return;
           }
+          if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1) {
+            return onResult(decideLazadaCheck(data));
+          }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
           onResult(data);
         } catch (err) { swallow(err); }
@@ -249,7 +277,10 @@
       // API ล่ม/หมดเวลา = ไม่มีคลิปที่ใช้ได้ ต้องทิ้ง ไม่ปล่อยค้าง
       $(document).ajaxError(function (e, xhr, opts) {
         try {
-          if (!opts || String(opts.url).indexOf(API_PATH) === -1) return;
+          if (!opts) return;
+          var isTracked = String(opts.url).indexOf(API_PATH) !== -1 ||
+            String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1;
+          if (!isTracked) return;
           if (ctx.trace_id) {
             beacon('abort', { trace_id: ctx.trace_id, reason: 'api_error' });
             ctx = { trace_id: null, at: 0 };
