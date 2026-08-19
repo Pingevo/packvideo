@@ -28,8 +28,12 @@
 
   function decideLazadaCheck(r) {
     if (!r || typeof r !== 'object') return { ordersn: null };
+    // เลขออเดอร์จริงต้องมาจาก check_low_price เอง (field order_id) — ห้ามใส่ค่าคงที่
+    // แทน เพราะ decide() เอาค่านี้ไปโชว์ตรงๆ บนหน้า rec.html ว่า "ออเดอร์: ..."
+    // ถ้าใส่ placeholder คนหน้างานจะเห็นเลขเดียวกันซ้ำทุกคลิป ใช้ตรวจย้อนหลังไม่ได้เลย
+    var found = r.found === true;
     return {
-      ordersn: r.found === true ? 'lazada-imei-found' : null,
+      ordersn: found && r.order_id != null ? String(r.order_id) : (found ? 'unknown' : null),
       is_low_price: r.is_low_price === true,
       is_cancelled: false,
     };
