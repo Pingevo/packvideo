@@ -554,7 +554,20 @@
 
   var REC_OPENED_KEY = 'packvideo.rec_opened';
 
+  // `lastOpenAt`/`autoOpenTried` อยู่ใน memory ของ script ตัวเดียว — รีเซ็ตทุกครั้งที่
+  // หน้าโหลดใหม่ หน้าที่ redirect เต็มหน้าต่อการสแกนหนึ่งครั้ง (lazada, shopee เมื่อสแกนจบ
+  // ออเดอร์) จึงรีเซ็ตทั้งคู่ทุกรอบ ทำให้ debounce 5 วิ กับ "ลองครั้งเดียว" ใช้ไม่ได้ข้ามหน้า
+  // เลย — เครื่องที่ recorder หลุดจริงจะโดนพยายามเปิดซ้ำทุกครั้งที่กดคีย์บนหน้าใหม่ ไม่ใช่
+  // แค่ครั้งเดียวต่อ session ต้องกันด้วย localStorage ถึงจะรอดข้ามหน้า
+  var AUTO_OPEN_COOLDOWN_KEY = 'packvideo.auto_open_last_at';
+  var AUTO_OPEN_COOLDOWN_MS = 60000;
+
   function openedBefore() { return readFlag(REC_OPENED_KEY) === '1'; }
+
+  function autoOpenOnCooldown() {
+    var last = Number(readFlag(AUTO_OPEN_COOLDOWN_KEY)) || 0;
+    return Date.now() - last < AUTO_OPEN_COOLDOWN_MS;
+  }
 
   function openRecorder(byUser) {
     try {
@@ -562,6 +575,7 @@
       // โหลดใหม่ ซึ่งถ้าเผอิญเริ่มอัดไปแล้วก็คือทำคลิปที่กำลังอัดขาด
       if (Date.now() - lastOpenAt < 5000) return true;
       lastOpenAt = Date.now();
+      try { localStorage.setItem(AUTO_OPEN_COOLDOWN_KEY, String(Date.now())); } catch (e) {}
       var w = window.open(BASE + '/rec.html', 'packvideo-rec');
       if (!w) return false;          // ตัวบล็อกป๊อปอัปกัน — ปล่อยให้ปุ่มบนแถบเป็นทางสำรอง
       // จำไว้ว่าเครื่องนี้เคยเปิดหน้าต่างอัดจริง ครั้งต่อไปถึงจะเปิดให้เองได้
@@ -586,6 +600,10 @@
       // การกดที่แถบมีตัวจัดการของมันเองแล้ว ถ้าไม่ข้ามจะเปิดสองครั้งต่อการกดหนึ่งที
       if (ev && ev.target && ev.target.closest && ev.target.closest('#' + PILL_ID)) return;
       if (!lastStatus || lastStatus.connected !== false) return;   // ยังไม่รู้สถานะ หรือเปิดอยู่แล้ว
+      // เครื่องที่ recorder หลุดจริง (ปิดเครื่อง/ปิดแท็บ) จะเจอเงื่อนไขนี้เป็น true ทุกหน้า
+      // ถ้าไม่กันไว้ ทุกครั้งที่พนักงานสแกนแล้วหน้าเปลี่ยน (redirect ไปใบปะหน้าแล้วกลับมา)
+      // จะเด้งหน้าต่างอัด/โฟกัสมันซ้ำอีก — พนักงานเห็นเป็น "เด้งหน้า rec ตลอด"
+      if (autoOpenOnCooldown()) return cleanup();
       autoOpenTried = true;
       openRecorder();
       cleanup();
