@@ -40,6 +40,23 @@
   }
 
   /**
+   * Shopee Express — หน้า /shp/express/api/ship คนละ endpoint กับหน้า imei ปกติ
+   * ยิง /shp/express/api/check_imei ไม่ใช่ /shopee/imei/get_order_new เลยไม่เคยเข้า
+   * เงื่อนไข API_PATH ด้านบนสักครั้ง — response เป็น {success, order_sn, msg} ตรงๆ
+   * อยู่แล้ว แค่เปลี่ยนชื่อ field ให้เข้ารูปที่ decide() เข้าใจ ไม่ต้องแต่งอะไรเพิ่ม
+   */
+  var EXPRESS_CHECK_PATH = '/shp/express/api/check_imei';
+
+  function decideExpressCheck(r) {
+    if (!r || typeof r !== 'object') return { ordersn: null };
+    return {
+      ordersn: r.success === true && r.order_sn != null ? String(r.order_sn) : null,
+      is_low_price: false,
+      is_cancelled: false,
+    };
+  }
+
+  /**
    * งาน KOL — คนละจังหวะกับ shopee ทั้งหมด
    *
    *   shopee : ยิง IMEI 1 ครั้ง = 1 ออเดอร์ = 1 คลิป · ปิดด้วยการยิงเลขพัสดุ
@@ -250,7 +267,8 @@
         try {
           if (!opts) return;
           if (String(opts.url).indexOf(KOL_ADD_PATH) !== -1) return onKolScan(opts.data);
-          if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1) {
+          if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1 ||
+              String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1) {
             return onScan(fieldFrom(opts.data, 'imei'), fieldFrom(opts.data, 'user'));
           }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
@@ -273,6 +291,9 @@
           if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1) {
             return onResult(decideLazadaCheck(data));
           }
+          if (String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1) {
+            return onResult(decideExpressCheck(data));
+          }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
           onResult(data);
         } catch (err) { swallow(err); }
@@ -283,7 +304,8 @@
         try {
           if (!opts) return;
           var isTracked = String(opts.url).indexOf(API_PATH) !== -1 ||
-            String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1;
+            String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1 ||
+            String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1;
           if (!isTracked) return;
           if (ctx.trace_id) {
             beacon('abort', { trace_id: ctx.trace_id, reason: 'api_error' });
