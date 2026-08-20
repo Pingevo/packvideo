@@ -5,8 +5,21 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import * as clips from '../lib/clips.js';
+import { findClip } from '../lib/repo.js';
 import { subscribe } from '../lib/sse.js';
 import { storageStatus } from '../lib/storage.js';
+
+/**
+ * อ่านคลิปสำหรับการอ่านอย่างเดียว (สตรีม / metadata)
+ *
+ * ดึงจาก memory ก่อน ถ้าไม่มีจึงต่อ MongoDB — คลิปที่อัดก่อนรอบ restart
+ * อยู่ในฐานข้อมูลแต่ไม่อยู่ใน memory หากอ่าน memory อย่างเดียวจะตอบ 404 ทั้งที่
+ * ไฟล์ยังอยู่ ทำให้ทีมเคลมเล่นวิดีโอไม่ได้ (แต่ดาวน์โหลดได้ เพราะเส้นทาง export
+ * ใช้ repo.findClip อยู่แล้ว)
+ */
+async function clipForRead(clipId) {
+  return clips.getClip(clipId) ?? (await findClip(clipId)) ?? null;
+}
 
 export const clipsRouter = Router();
 
@@ -81,8 +94,8 @@ clipsRouter.get('/clips', (req, res) => {
   });
 });
 
-clipsRouter.get('/clips/:clipId', (req, res) => {
-  const clip = clips.getClip(req.params.clipId);
+clipsRouter.get('/clips/:clipId', async (req, res) => {
+  const clip = await clipForRead(req.params.clipId);
   if (!clip) return res.status(404).json({ ok: false, error: 'ไม่พบคลิปนี้' });
   res.json({ ok: true, clip: clips.toMetadata(clip) });
 });
@@ -97,7 +110,7 @@ clipsRouter.get('/clips/:clipId', (req, res) => {
 export const mediaRouter = Router();
 
 mediaRouter.get('/:clipId', async (req, res) => {
-  const clip = clips.getClip(req.params.clipId);
+  const clip = await clipForRead(req.params.clipId);
   if (!clip?.media_path) return res.status(404).json({ ok: false, error: 'ไม่พบไฟล์คลิป' });
 
   const full = path.join(path.resolve(config.storage.path), clip.media_path);
