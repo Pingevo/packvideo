@@ -14,6 +14,9 @@ import { pinRouter } from './routes/pin.js';
 import { shareApiRouter, sharePublicRouter } from './routes/share.js';
 import { bridgeRouter } from './routes/bridge.js';
 import { devRouter } from './dev/routes.js';
+import { identify, requireLogin } from './lib/auth.js';
+import { authRouter } from './routes/auth.js';
+import { camtestRouter } from './routes/camtest.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
 
@@ -45,6 +48,12 @@ export function createApp() {
     next();
   });
 
+  // รู้ตัวคนเรียกจาก cookie ของ sellcenter ก่อนทุกอย่าง แล้วค่อยกั้นเส้นทางที่ต้องล็อกอิน (R3)
+  // ต้องมาก่อน express.static — ไม่งั้น clips.html/monitor.html ถูกเสิร์ฟให้คนนอกก่อนถึงด่าน
+  app.use(identify);
+  app.use(requireLogin);
+  app.use('/api', authRouter);
+
   // ต้องมาก่อน express.static เพื่อให้ route นี้ชนะไฟล์ที่ชื่อซ้ำกัน
   app.use(bridgeRouter);
 
@@ -56,6 +65,7 @@ export function createApp() {
   app.use('/api', exportRouter);
   app.use('/api', pinRouter);
   app.use('/api', shareApiRouter);
+  app.use('/api', camtestRouter);
   app.use(sharePublicRouter);
   app.use('/media', mediaRouter);
 

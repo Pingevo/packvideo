@@ -500,7 +500,18 @@
       '0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 0 0 rgba(248,81,73,.7)}' +
       '50%{opacity:.35;transform:scale(.7);box-shadow:0 0 0 5px rgba(248,81,73,0)}}' +
       '#' + PILL_ID + '.pv-rec{background:#2b1113;color:#ffd7d5;opacity:1}' +
-      '#' + PILL_ID + '.pv-bad .pv-live,#' + PILL_ID + '.pv-warn .pv-live{background:#fff;animation:none}';
+      '#' + PILL_ID + '.pv-bad .pv-live,#' + PILL_ID + '.pv-warn .pv-live{background:#fff;animation:none}' +
+      '#' + CONFIRM_ID + '{position:fixed;right:14px;bottom:62px;z-index:99998;width:min(340px,calc(100vw - 28px));' +
+      'background:#fff;color:#1f2328;border-radius:12px;box-shadow:0 6px 28px rgba(0,0,0,.35);padding:14px 16px;' +
+      'font:14px system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;border-top:5px solid #9a6700}' +
+      '#' + CONFIRM_ID + ' h4{margin:0 0 8px;font-size:15px}' +
+      '#' + CONFIRM_ID + ' .pv-desk{font-size:26px;font-weight:800;letter-spacing:.5px;margin:2px 0}' +
+      '#' + CONFIRM_ID + ' .pv-line{font-size:13px;margin:3px 0;color:#57606a}' +
+      '#' + CONFIRM_ID + ' .pv-cam-ok{color:#1a7f37;font-weight:700}#' + CONFIRM_ID + ' .pv-cam-bad{color:#b3261e;font-weight:700}' +
+      '#' + CONFIRM_ID + ' .pv-btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}' +
+      '#' + CONFIRM_ID + ' button{font:inherit;font-weight:700;padding:9px 12px;border-radius:8px;cursor:pointer;' +
+      'border:1px solid #d0d7de;background:#f6f8fa;color:#1f2328}' +
+      '#' + CONFIRM_ID + ' button.pv-yes{background:#1a7f37;border-color:#1a7f37;color:#fff;flex:1}';
     (document.head || document.documentElement).appendChild(s);
   }
 
@@ -587,6 +598,8 @@
    * สิ่งที่ทำได้และทำตรงนี้คือ ทำให้พนักงานไม่ต้องคอยจำว่าหน้าต่างนั้นเปิดอยู่ไหม
    */
   var PILL_ID = 'packvideo-status';
+  var CONFIRM_ID = 'packvideo-confirm';
+  var CONFIRM_KEY = 'packvideo.desk_confirm';
   var STATUS_POLL_MS = 15000;   // การแพ็คหนึ่งออเดอร์ราวหนึ่งนาที ช้ากว่านี้แถบจะตามไม่ทัน
   var statusTimer = null;
   var lastStatus = null;
@@ -685,6 +698,78 @@
     } catch (e) {}
   }
 
+  // ── ยืนยันโต๊ะตอนเริ่มกะ (R1.6a) ─────────────────────────────
+  /**
+   * ช่วงไม่มีวิดีโอใหญ่ 3 ใน 4 ครั้ง (394 ออเดอร์ ถึง 17 ก.ย. 2026) เกิดตอนพนักงานไปแพ็ค
+   * ที่โต๊ะคนอื่น — หน้าแพ็คเป็นของเครื่องนั้น แต่ไม่มีใครดูว่าหน้าต่างอัดของโต๊ะนั้นทำงานไหม
+   *
+   * ถามครั้งเดียวต่อวันต่อคนต่อโต๊ะ: ครั้งแรกของวัน หรือเมื่อคนที่ล็อกอินไม่ใช่คนล่าสุดที่ยืนยัน
+   * ไม่ล็อกงาน (R1.4) — ไม่กดก็แพ็คต่อได้ แต่แถบค้างเหลืองจนกว่าจะยืนยัน
+   */
+  function todayBkk() {
+    try { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }); }
+    catch (e) { return new Date().toISOString().slice(0, 10); }
+  }
+
+  function needsConfirm() {
+    try {
+      var c = JSON.parse(localStorage.getItem(CONFIRM_KEY) || 'null');
+      return !(c && c.day === todayBkk() && c.station === station && c.user === (userName() || ''));
+    } catch (e) { return true; }
+  }
+
+  function confirmDesk() {
+    try {
+      var user = userName() || '';
+      localStorage.setItem(CONFIRM_KEY, JSON.stringify({ day: todayBkk(), station: station, user: user, at: Date.now() }));
+      if (navigator.sendBeacon) {
+        var body = new URLSearchParams({ user: user, v: VERSION });
+        navigator.sendBeacon(BASE + '/api/desk/' + encodeURIComponent(station) + '/confirm', body);
+      }
+    } catch (e) { swallow(e); }
+    var card = document.getElementById(CONFIRM_ID);
+    if (card) card.remove();
+    renderPill(lastStatus);
+  }
+
+  function camLine(st) {
+    if (!st) return '<span class="pv-cam-bad">ติดต่อระบบวิดีโอไม่ได้</span>';
+    if (!st.connected) return '<span class="pv-cam-bad">❌ หน้าต่างอัดของโต๊ะนี้ไม่ได้เปิด</span>';
+    if (st.camera_ready === false || st.video_ok === false) {
+      return '<span class="pv-cam-bad">❌ ' + (st.video_problem_text || 'กล้องไม่ทำงาน') + '</span>';
+    }
+    return '<span class="pv-cam-ok">✅ กล้องพร้อมบันทึก</span>';
+  }
+
+  function renderConfirm(st) {
+    if (!UI_ENABLED || !station) return;
+    var card = document.getElementById(CONFIRM_ID);
+    if (!needsConfirm()) { if (card) card.remove(); return; }
+    if (!card) {
+      card = document.createElement('div');
+      card.id = CONFIRM_ID;
+      card.setAttribute('role', 'dialog');
+      card.innerHTML =
+        '<h4>ยืนยันโต๊ะก่อนเริ่มแพ็ค</h4>' +
+        '<div class="pv-line">เครื่องนี้บันทึกวิดีโอเป็นของ</div>' +
+        '<div class="pv-desk"></div>' +
+        '<div class="pv-line pv-who"></div>' +
+        '<div class="pv-line pv-cam"></div>' +
+        '<div class="pv-btns">' +
+        '<button type="button" class="pv-yes">ใช่ ฉันอยู่โต๊ะนี้</button>' +
+        '<button type="button" class="pv-view">ดูภาพกล้อง</button>' +
+        '<button type="button" class="pv-no">ไม่ใช่</button></div>';
+      card.querySelector('.pv-yes').onclick = confirmDesk;
+      card.querySelector('.pv-view').onclick = function () { openRecorder(true); };
+      // ไม่ใช่โต๊ะนี้ = เครื่องนี้ถูกตั้งผิดโต๊ะ ต้องแก้ที่หน้าตั้งค่า ไม่ใช่แค่ปิดกล่องทิ้ง
+      card.querySelector('.pv-no').onclick = function () { window.open(BASE + '/setup.html', 'packvideo-setup'); };
+      document.body.appendChild(card);
+    }
+    card.querySelector('.pv-desk').textContent = station + (st && st.device_name ? ' · ' + st.device_name : '');
+    card.querySelector('.pv-who').textContent = 'ผู้ใช้: ' + (userName() || 'ไม่ทราบชื่อ');
+    card.querySelector('.pv-cam').innerHTML = camLine(st);
+  }
+
   function renderPill(st) {
     if (!UI_ENABLED) return;
     ensureStyle();
@@ -694,7 +779,8 @@
       el.id = PILL_ID;
       el.type = 'button';
       el.onclick = function () {
-        if (lastStatus && (!lastStatus.connected || lastStatus.camera_ready === false)) openRecorder(true);
+        if (lastStatus && (!lastStatus.connected || lastStatus.camera_ready === false ||
+            lastStatus.video_ok === false || lastStatus.recorder_outdated)) openRecorder(true);
       };
       // สร้างลูกครั้งเดียวแล้วอัปเดตแค่ข้อความ — ถ้าเขียน innerHTML ทับทุกรอบ จุดจะถูก
       // สร้างใหม่ทุก 15 วินาที แล้ว animation เริ่มนับหนึ่งใหม่ตลอด กะพริบไม่เป็นจังหวะ
@@ -714,6 +800,19 @@
       cls = 'pv-bad';
       text = '⚠️ กล้องไม่ทำงาน / กล้องหลุด · ' + st.station_id;
       alertCameraSound();
+    } else if (st.video_ok === false) {
+      // ดูจากวิดีโอที่มาถึงเซิร์ฟเวอร์จริง ไม่ใช่คำบอกของหน้าต่างอัด — จับกรณีที่กล้องยัง
+      // "พร้อม" แต่ไม่มีภาพเข้า (เช่นหน้าต่างอัดไม่ได้รับสัญญาณเริ่ม) ซึ่งเคยเขียวทั้งวัน
+      cls = 'pv-bad';
+      text = '⚠️ ไม่ได้บันทึกวิดีโอ: ' + (st.video_problem_text || 'ไม่มีภาพเข้า') +
+        ' · ' + st.station_id + ' — กดเพื่อเปิดหน้าต่างอัดใหม่';
+      alertCameraSound();
+    } else if (needsConfirm()) {
+      cls = 'pv-warn';
+      text = 'ยังไม่ได้ยืนยันโต๊ะ · ' + st.station_id + ' — กดยืนยันที่กล่องด้านบน';
+    } else if (st.recorder_outdated) {
+      cls = 'pv-warn';
+      text = 'หน้าต่างอัดรุ่นเก่า · ' + st.station_id + ' — กดเพื่อรีเฟรช';
     } else if (!st.recording_allowed) {
       cls = 'pv-warn';
       text = 'ดิสก์เต็ม หยุดบันทึกชั่วคราว · ' + st.station_id;
@@ -751,6 +850,9 @@
       renderPill(lastStatus);
       setTimeout(pollStatus, 1500);
       setTimeout(pollStatus, 5000);
+      // เซิร์ฟเวอร์ตัดสินว่า "ไม่มีวิดีโอเข้า" ที่ 8 วินาทีหลังเริ่ม ถามอีกรอบหลังจากนั้น
+      // ไม่งั้นพนักงานจะเห็นแดงช้าไปถึงรอบปกติอีก 15 วินาที
+      if (on) setTimeout(pollStatus, 10000);
     } catch (e) { swallow(e); }
   }
 
@@ -779,6 +881,7 @@
         .then(function (d) {
           lastStatus = d && d.ok ? reconcile(d) : null;
           renderPill(lastStatus);
+          renderConfirm(lastStatus);
         })
         .catch(function () { lastStatus = null; renderPill(null); });
     } catch (e) { swallow(e); }

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import express from 'express';
 import { exportClip, exportFrame, LIMITS } from '../lib/export.js';
 import { ffmpegCaps } from '../lib/ffmpeg.js';
+import { actorOf } from '../lib/auth.js';
 
 export const exportRouter = Router();
 
@@ -22,7 +23,7 @@ exportRouter.post('/clips/:clipId/export', json, async (req, res) => {
   const result = await exportClip(req.params.clipId, {
     startMs: req.body?.start_ms,
     durationMs: req.body?.duration_ms,
-    actor: req.body?.by ?? null,
+    actor: actorOf(req, req.body?.by),
   });
   if (!result.ok) return res.status(422).json(result);
 
@@ -46,7 +47,7 @@ exportRouter.get('/clips/:clipId/export/:name', async (req, res) => {
   const result = await exportClip(req.params.clipId, {
     startMs: Number(m[2]),
     durationMs: Number(m[3]),
-    actor: req.query.by ?? null,
+    actor: actorOf(req, req.query.by),
   });
   if (!result.ok) return res.status(422).json(result);
 
@@ -57,7 +58,7 @@ exportRouter.get('/clips/:clipId/export/:name', async (req, res) => {
 exportRouter.get('/clips/:clipId/frame', async (req, res) => {
   const result = await exportFrame(req.params.clipId, {
     atMs: Number(req.query.at_ms) || 0,
-    actor: req.query.by ?? null,
+    actor: actorOf(req, req.query.by),
   });
   if (!result.ok) return res.status(422).json(result);
   res.sendFile(result.path);

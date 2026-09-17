@@ -3,6 +3,9 @@ import express from 'express';
 import { listStations, claimStation, heartbeat, releaseStation } from '../lib/stations.js';
 import { storageStatus } from '../lib/storage.js';
 import { signalCors } from './signal.js';
+import { noListenerFor } from '../lib/sse.js';
+import { videoStatus } from '../lib/videohealth.js';
+import { recVersion } from '../lib/recversion.js';
 
 export const stationsRouter = Router();
 
@@ -39,6 +42,14 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
 
   const disk = await storageStatus();
+  const video = videoStatus(station.station_id);
+  // heartbeat ยังวิ่ง (โต๊ะขึ้น "ต่ออยู่") แต่ช่องรับสัญญาณเริ่มอัดหลุด — ถ้าสแกนตอนนี้คลิปจะว่าง
+  // เป็นลายเซ็นของช่วงดับ 12 ก.ย. 2026 ที่ camera_ready จับไม่ได้ จึงต้องดูตรงนี้ด้วย
+  if (station.connected && video.video_ok && noListenerFor(station.station_id) > 15_000) {
+    video.video_ok = false;
+    video.video_problem = 'no_listener';
+    video.video_problem_text = 'หน้าต่างอัดขาดการเชื่อมต่อสัญญาณ';
+  }
   res.json({
     ok: true,
     station_id: station.station_id,
@@ -51,7 +62,31 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
     recording_allowed: disk.recording_allowed,
     disk_level: disk.disk_level,
     disk_free_gb: disk.free_gb,
+    ...video,
+    // หน้าต่างอัดเปิดค้างมาจากก่อน deploy — ยังมีบั๊กที่แก้ไปแล้ว ต้องรีเฟรช
+    confirmed_by: confirmations.get(station.station_id)?.by ?? null,
+    confirmed_at: confirmations.get(station.station_id)?.at ?? null,
+    recorder_outdated: !!(station.connected && recVersion() && station.app_version !== recVersion()),
   });
+});
+
+/** station → คนที่ยืนยันโต๊ะล่าสุด (R1.6a) · ในหน่วยความจำพอ — ใช้แสดงผล ไม่ใช่หลักฐาน */
+const confirmations = new Map();
+
+/**
+ * POST /api/desk/:stationId/confirm — พนักงานกดยืนยันว่าตัวเองแพ็คอยู่ที่โต๊ะนี้ (R1.6a)
+ *
+ * hook.js ยิงด้วย sendBeacon จากหน้าแพ็คของ sellcenter · cookie ของ sellcenter ติดมาด้วย
+ * (โดเมนเดียวกัน) ชื่อจากบัญชีจึงชนะชื่อที่หน้าเว็บส่งมา
+ */
+stationsRouter.post('/desk/:stationId/confirm', signalCors, express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+  const stationId = req.params.stationId;
+  if (!listStations().some((s) => s.station_id === stationId)) return res.status(404).json({ ok: false, error: 'ไม่มีโต๊ะหมายเลขนี้' });
+  const by = req.user?.name ?? (String(req.body?.user ?? '').slice(0, 120) || null);
+  const at = new Date();
+  confirmations.set(stationId, { by, at });
+  req.log.info({ station_id: stationId, by, via: req.user ? 'account' : 'page' }, 'ยืนยันโต๊ะก่อนเริ่มแพ็ค');
+  res.status(204).end();
 });
 
 /**

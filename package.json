@@ -26,7 +26,14 @@
     "pree2e:share": "node scripts/check-node.cjs",
     "e2e:share": "node scripts/e2e-share.mjs",
     "pree2e:media": "node scripts/check-node.cjs",
-    "e2e:media": "node --env-file-if-exists=.env scripts/e2e-media-cachemiss.mjs"
+    "e2e:media": "node --env-file-if-exists=.env scripts/e2e-media-cachemiss.mjs",
+    "pree2e:video": "node scripts/check-node.cjs",
+    "e2e:video": "node scripts/e2e-video-health.mjs",
+    "repair:head": "node --env-file-if-exists=.env scripts/repair-clip-head.mjs",
+    "pree2e:auth": "node scripts/check-node.cjs",
+    "e2e:auth": "node scripts/e2e-auth.mjs",
+    "pree2e:monitor": "node scripts/check-node.cjs",
+    "e2e:monitor": "node scripts/e2e-monitor.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",

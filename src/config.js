@@ -58,6 +58,15 @@ export const config = {
   // เพดานความยาวคลิป — ปรับได้ช่วง pilot โดยไม่ต้องแก้โค้ด ดู clips.js §เพดานความปลอดภัย
   clipMaxMinutes: int('CLIP_MAX_MINUTES', 15),
 
+  // เริ่มคลิปแล้วไม่มีชิ้นวิดีโอภายในกี่วินาทีถึงเตือนว่า "ไม่ได้บันทึก"
+  // ชิ้นแรกถูกปล่อยหลังเริ่มอัด ~3.4 วินาที (วัดจากไฟล์จริง 101 เฟรม/ชิ้น) + เวลาอัปโหลด
+  // ตั้ง 5 จะเตือนผิดทุกครั้งที่เน็ตช้า
+  noVideoAlertSec: int('NO_VIDEO_ALERT_SEC', 8),
+  // ไม่มีวิดีโอติดกันกี่ออเดอร์ถึงแจ้งหัวหน้าคลังทาง Telegram
+  emptyStreakAlert: int('EMPTY_STREAK_ALERT', 3),
+  // หลังสั่งหยุดอัด รอชิ้นสุดท้ายนานสุดเท่าไร ก่อนปิดไฟล์เองแม้หน้าต่างอัดไม่ยืนยัน
+  closeGraceSec: int('CLOSE_GRACE_SEC', 8),
+
   // รายชื่อโต๊ะที่เลือกได้ในหน้าตั้งค่า — คลังมี 6 โต๊ะขึ้นไป
   stations: (() => {
     const listed = list('STATIONS');
@@ -68,6 +77,23 @@ export const config = {
 
   // origin ของระบบเดิมที่อนุญาตให้ยิงสัญญาณเข้ามา — ระบุตรงๆ ไม่ใช้ '*'
   allowedOrigins: list('ALLOWED_ORIGINS'),
+
+  // ── ล็อกอินด้วยบัญชี sellcenter (R3) ─────────────────────────
+  auth: (() => {
+    const jwtSecret = str('SELLCENTER_JWT_SECRET');
+    const mode = str('AUTH_MODE', '');
+    return {
+      // ต้องเป็นค่าเดียวกับ JWT_SECRET ของ sellcenter (api/lib/JwtSecret.js)
+      jwtSecret,
+      // ตั้ง secret แล้วบังคับเอง · AUTH_MODE=off ปิดชั่วคราวได้ (เช่นตอนเปลี่ยน secret ฝั่ง sellcenter)
+      // ไม่มี secret = บังคับไม่ได้ ไม่งั้นทุกคนเข้าไม่ได้ รวมถึงหน้าต่างอัด
+      enforce: !!jwtSecret && mode !== 'off',
+      loginUrl: str('SELLCENTER_LOGIN_URL', 'https://digital.in.th/'),
+      sessionIdleHours: int('SESSION_IDLE_HOURS', 16),
+      // sellcenter ใช้ดึง /api/video-health จากฝั่งเซิร์ฟเวอร์ (ไม่มี cookie ของผู้ใช้)
+      apiKey: str('PACKVIDEO_API_KEY'),
+    };
+  })(),
 
   telegram: {
     botToken: str('TELEGRAM_BOT_TOKEN'),
@@ -80,9 +106,10 @@ const KNOWN_KEYS = new Set([
   'NODE_ENV', 'PORT', 'LOG_LEVEL',
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
-  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
+  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'NO_VIDEO_ALERT_SEC', 'EMPTY_STREAK_ALERT', 'CLOSE_GRACE_SEC', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
   'FFMPEG_PATH', 'FFPROBE_PATH',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
+  'SELLCENTER_JWT_SECRET', 'AUTH_MODE', 'SELLCENTER_LOGIN_URL', 'SESSION_IDLE_HOURS', 'PACKVIDEO_API_KEY',
 ]);
 
 /**
@@ -133,6 +160,16 @@ export function configWarnings() {
       `MONGO_URL ชี้ฐานข้อมูล ${urlDb} แต่ MONGO_DB คือ ${config.mongo.dbName} — ` +
       'ต้องเป็นชื่อเดียวกัน (แยกตัวพิมพ์เล็กใหญ่) ไม่งั้นเขียนฐานข้อมูลไม่ได้',
     );
+  }
+
+  if (!config.auth.jwtSecret) {
+    warnings.push(
+      'SELLCENTER_JWT_SECRET ไม่ได้ตั้ง — ไม่มีการล็อกอิน ใครก็ค้นคลิป ดูชื่อพนักงาน และโหลดวิดีโอได้จากอินเทอร์เน็ต',
+    );
+  } else if (config.auth.jwtSecret === 'Evolution') {
+    warnings.push('SELLCENTER_JWT_SECRET ยังเป็นค่า default ของ sellcenter ที่ใครก็รู้ — ปลอมบัญชีได้ ต้องตั้ง JWT_SECRET จริงที่ sellcenter ก่อน');
+  } else if (!config.auth.enforce) {
+    warnings.push('AUTH_MODE=off — ปิดการล็อกอินอยู่');
   }
 
   for (const [key, value] of Object.entries(process.env)) {

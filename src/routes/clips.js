@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import express from 'express';
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
-import { config } from '../config.js';
 import * as clips from '../lib/clips.js';
 import { findClip } from '../lib/repo.js';
 import { subscribe } from '../lib/sse.js';
 import { storageStatus } from '../lib/storage.js';
+import { recVersion } from '../lib/recversion.js';
+import { sendMedia } from '../lib/mediafile.js';
 
 /**
  * อ่านคลิปสำหรับการอ่านอย่างเดียว (สตรีม / metadata)
@@ -42,6 +40,7 @@ clipsRouter.get('/stream/:stationId', async (req, res) => {
       // การขอ 5 วินาทีจะได้ช่วงห่าง >=5 โดยไม่ได้อะไรกลับมา
       timeslice_ms: 1000,
       video_bps: 1_000_000,
+      rec_version: recVersion(),
       open_clip: open ? { clip_id: open._id, ordersn: open.ordersn, tracking_no: open.tracking_no } : null,
     })}\n\n`,
   );
@@ -121,41 +120,6 @@ export const mediaRouter = Router();
 mediaRouter.get('/:clipId', async (req, res) => {
   const clip = await clipForRead(req.params.clipId);
   if (!clip?.media_path) return res.status(404).json({ ok: false, error: 'ไม่พบไฟล์คลิป' });
-
-  const full = path.join(path.resolve(config.storage.path), clip.media_path);
-  // กัน path traversal แม้ clip_id จะมาจากที่เก็บของเราเอง
-  if (!full.startsWith(path.resolve(config.storage.path))) return res.sendStatus(400);
-
-  let stat;
-  try {
-    stat = await fsp.stat(full);
-  } catch {
-    return res.status(404).json({ ok: false, error: 'ไฟล์หายไปจากดิสก์' });
-  }
-
-  const range = req.headers.range;
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Cache-Control', 'private, no-store');
-
-  if (!range) {
-    res.setHeader('Content-Length', stat.size);
-    return fs.createReadStream(full).pipe(res);
-  }
-
-  const m = /bytes=(\d*)-(\d*)/.exec(range);
-  if (!m) return res.status(416).end();
-  const start = m[1] ? Number.parseInt(m[1], 10) : 0;
-  const end = m[2] ? Number.parseInt(m[2], 10) : stat.size - 1;
-
-  if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
-    res.setHeader('Content-Range', `bytes */${stat.size}`);
-    return res.status(416).end();
-  }
-
-  const to = Math.min(end, stat.size - 1);
-  res.status(206);
-  res.setHeader('Content-Range', `bytes ${start}-${to}/${stat.size}`);
-  res.setHeader('Content-Length', to - start + 1);
-  fs.createReadStream(full, { start, end: to }).pipe(res);
+  const sent = await sendMedia(req, res, clip);
+  if (!sent) res.status(404).json({ ok: false, error: 'ไฟล์หายไปจากดิสก์' });
 });

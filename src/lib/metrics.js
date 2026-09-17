@@ -18,10 +18,17 @@ export function record(event, station) {
 }
 
 function within(ms) {
-  const cutoff = Date.now() - ms;
-  // ตัดของเก่าทิ้งไปด้วยเลย จะได้ไม่ต้องมีงานกวาดแยก
-  const idx = events.findIndex((e) => e.t >= cutoff);
+  // ตัดของเก่าทิ้งเฉพาะที่เลยหน้าต่างเก็บ (6 ชม.) — ไม่ใช่เลยช่วงที่ถาม
+  //
+  // เดิมตัดที่ `ms` ของผู้เรียก ซึ่ง commitRate()/totals() ถาม 1 ชั่วโมงทุก 15 วินาที
+  // ประวัติทั้งหมดจึงเหลือแค่ชั่วโมงเดียวเสมอ แล้วกฎ hookdead ที่ถามย้อนไปถึงเวลาจับจองโต๊ะ
+  // (หลายวัน) มองไม่เห็นสัญญาณที่เก่ากว่าชั่วโมง → เตือนผิดว่า "ไม่เคยได้รับสัญญาณเลย"
+  // กับโต๊ะที่แค่พักเกินชั่วโมง (เจอจริง 17 ก.ย. 2026: desk-02 มีคลิปวันนั้น 190+ ตัว)
+  const keepFrom = Date.now() - WINDOW_MS;
+  const idx = events.findIndex((e) => e.t >= keepFrom);
   if (idx > 0) events = events.slice(idx);
+  else if (idx === -1) events = [];
+  const cutoff = Date.now() - ms;
   return events.filter((e) => e.t >= cutoff);
 }
 

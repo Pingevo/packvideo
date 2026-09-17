@@ -6,6 +6,9 @@ import { alert } from './notify.js';
 import { broadcast } from './sse.js';
 import { log } from '../log.js';
 import { config } from '../config.js';
+import { videoStatus } from './videohealth.js';
+import { noListenerFor } from './sse.js';
+import { clipStatsByStation } from './repo.js';
 
 /**
  * เฝ้าดูสุขภาพระบบตาม design §9.4
@@ -28,6 +31,7 @@ let lastDiskLevel = null;
 export async function runChecks() {
   const findings = [];
   const stations = listStations();
+  const today = await todayStats();
   const connected = stations.filter((s) => s.connected);
   const rate = commitRate();
 
@@ -67,6 +71,44 @@ export async function runChecks() {
     }
   }
 
+  // ── 2.2 · โต๊ะที่ได้คลิปแต่ไม่ได้วิดีโอจริง ──────────────────
+  // ดูจากชิ้นวิดีโอที่มาถึงเซิร์ฟเวอร์ ไม่ใช่คำบอกของหน้าต่างอัด — จับกรณีที่ 2.1 มองไม่เห็น
+  // quiet: ไม่ส่ง Telegram จากตรงนี้ — คลิปเดียวที่ชิ้นแรกมาช้าไม่ควรปลุกหัวหน้าคลัง
+  // videohealth ส่งเองเมื่อว่างติดกันครบเกณฑ์ พร้อมข้อความ "กลับมาแล้ว" เมื่อหาย
+  for (const s of stations) {
+    const v = videoStatus(s.station_id);
+    if (!v.video_ok) {
+      findings.push({
+        level: 'error',
+        quiet: true,
+        key: `video:${s.station_id}`,
+        text: `${s.station_id} ${v.video_problem_text} — ออเดอร์ที่แพ็คตอนนี้ไม่มีวิดีโอ`,
+      });
+    } else if (s.connected && noListenerFor(s.station_id) > 15_000) {
+      findings.push({
+        level: 'error',
+        quiet: true,
+        key: `nolistener:${s.station_id}`,
+        text: `${s.station_id} ต่ออยู่แต่หน้าต่างอัดขาดการเชื่อมต่อสัญญาณ — สแกนตอนนี้จะได้คลิปว่าง ให้รีเฟรชหน้าต่างอัด`,
+      });
+    }
+  }
+
+  // ── 2.3 · ออเดอร์วันนี้ที่ไม่มีวิดีโอ (R6.2) ───────────────
+  // quiet: ย้อนหลังแก้ไม่ได้แล้ว เตือน Telegram ซ้ำทุก 30 นาทีไม่มีประโยชน์ — videohealth เตือนตอนเกิดไปแล้ว
+  for (const [stationId, t] of Object.entries(today.by_station)) {
+    if (t.no_video > 0 || t.corrupt > 0) {
+      findings.push({
+        level: 'warn',
+        quiet: true,
+        key: `today:${stationId}`,
+        text:
+          `${stationId} วันนี้มีออเดอร์ที่ไม่มีวิดีโอ ${t.no_video} จาก ${t.clips} คลิป` +
+          (t.corrupt ? ` · ไฟล์เปิดไม่ได้ ${t.corrupt}` : ''),
+      });
+    }
+  }
+
   // ── 2.5 · โต๊ะที่ต่ออยู่แต่ hook.js ไม่เคยส่งสัญญาณเลย ──────
   /**
    * กฎที่เหลือทุกข้อมองไม่เห็นโต๊ะที่ hook.js ตายสนิท เพราะทุกข้อนับจากสัญญาณ
@@ -80,11 +122,18 @@ export async function runChecks() {
    * และกรณีนั้นกฎข้อ 3 ดูแลอยู่แล้ว สองกฎนี้จึงเสริมกันโดยไม่เตือนซ้ำและไม่เตือนผิด
    */
   for (const s of connected) {
-    const since = new Date(s.claimed_at).getTime();
+    // นับจากหลังเที่ยงคืนวันนี้หรือตอนจับจอง แล้วแต่อันไหนหลังกว่า — เครื่องที่เปิดค้างข้ามวัน
+    // เคยขึ้นว่า "ต่ออยู่มา 23124 นาที" ซึ่งไม่ได้บอกอะไรคนอ่าน
+    const since = Math.max(new Date(s.claimed_at).getTime(), new Date(today.since).getTime() || 0);
     if (!Number.isFinite(since) || Date.now() - since < HOOK_DEAD_MS) continue;
 
     const signalled = stationsSignalledSince(since);
     if (signalled.has(s.station_id)) continue;
+    // ความจริงอยู่ที่ฐานข้อมูล — มีคลิปของโต๊ะนี้หลังจับจอง = hook ทำงาน (R6.1)
+    // ตัวนับในหน่วยความจำเก็บแค่ 6 ชม. และหายเมื่อรีสตาร์ท ใช้ตัดสินลำพังไม่ได้
+    const last = today.by_station[s.station_id]?.last_at;
+    if (last && new Date(last).getTime() >= since) continue;
+    if (!today.ok) continue;   // ฐานข้อมูลตอบไม่ได้ = ไม่รู้ ไม่เดาว่าพัง
 
     const others = [...signalled].filter((x) => x !== s.station_id);
     if (!others.length) continue;   // ไม่มีใครทำงานเลย — กฎข้อ 3 รับผิดชอบกรณีนี้
@@ -93,8 +142,8 @@ export async function runChecks() {
       level: 'error',
       key: `hookdead:${s.station_id}`,
       text:
-        `${s.station_id} ต่ออยู่มา ${Math.round((Date.now() - since) / 60000)} นาที ` +
-        `แต่ไม่เคยได้รับสัญญาณจาก hook.js เลยสักครั้ง ทั้งที่อีก ${others.length} โต๊ะส่งอยู่ — ` +
+        `${s.station_id} ต่ออยู่ ${Math.round((Date.now() - since) / 60000)} นาทีแล้ววันนี้ ` +
+        `แต่ยังไม่มีคลิปหรือสัญญาณจากหน้าแพ็คเลย ทั้งที่อีก ${others.length} โต๊ะส่งอยู่ — ` +
         'หน้าแพ็คของเครื่องนี้อาจโหลด hook.js ไม่ได้ หรืออ่าน station_id/token ไม่ได้ ' +
         '(ดู /bridge.html และ ALLOWED_ORIGINS)',
     });
@@ -182,10 +231,38 @@ export async function runChecks() {
   }
 
   for (const f of findings) {
+    if (f.quiet) continue;
     await alert(f.key, f.text);
   }
 
-  return { checked_at: new Date().toISOString(), findings, stations, rate, disk };
+  // สถานะที่หน้าจอต้องใช้แยก "ต่ออยู่และบันทึกจริง" ออกจาก "ต่ออยู่แต่ไม่ได้บันทึก" (R6.3)
+  const enriched = stations.map((s) => {
+    const v = videoStatus(s.station_id);
+    const listenerGone = s.connected && noListenerFor(s.station_id) > 15_000;
+    let state;
+    if (!s.connected) state = s.stale ? 'lost' : 'off';
+    else if (s.camera_ready === false) state = 'camera';
+    else if (!v.video_ok) state = 'no_video';
+    else if (listenerGone) state = 'no_listener';
+    else state = s.recording ? 'recording' : 'ready';
+    return { ...s, ...v, state, today: today.by_station[s.station_id] ?? { clips: 0, no_video: 0, corrupt: 0, last_at: null } };
+  });
+
+  return { checked_at: new Date().toISOString(), findings, stations: enriched, rate, disk, today: { ok: today.ok, since: today.since } };
+}
+
+/** คลิปวันนี้ (เวลาไทย) รายโต๊ะ · แคช 30 วินาที — หน้า monitor รีเฟรชทุก 10 วิ ไม่ต้อง aggregate ทุกครั้ง */
+let todayCache = { at: 0, value: null };
+async function todayStats() {
+  if (todayCache.value && Date.now() - todayCache.at < 30_000) return todayCache.value;
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  const since = new Date(`${day}T00:00:00+07:00`).toISOString();
+  const rows = await clipStatsByStation(since);
+  const by_station = {};
+  for (const r of rows ?? []) by_station[r._id] = { clips: r.clips, no_video: r.no_video, corrupt: r.corrupt, last_at: r.last_at };
+  const value = { ok: rows !== null, since, by_station };
+  if (rows !== null) todayCache = { at: Date.now(), value };
+  return value;
 }
 
 export function startMonitor() {

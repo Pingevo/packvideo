@@ -52,7 +52,7 @@
 </section>
 
 <section>
-  <h2>ภาพรวมหนึ่งชั่วโมงล่าสุด</h2>
+  <h2>ภาพรวม</h2>
   <div class="cards" id="cards"></div>
 </section>
 
@@ -61,8 +61,10 @@
   <table>
     <thead><tr>
       <th>โต๊ะ</th><th>สถานะ</th><th>เครื่อง</th>
-      <th class="num">ใบปะหน้า</th><th class="num">คลิป</th><th class="num">อัตรา</th>
-      <th class="num">คิว</th><th>เห็นล่าสุด</th>
+      <th class="num" title="คลิปทั้งหมดวันนี้ (จากฐานข้อมูล)">คลิปวันนี้</th>
+      <th class="num" title="ออเดอร์วันนี้ที่ไม่มีวิดีโอ หรือไฟล์เปิดไม่ได้">ไม่มีวิดีโอ</th>
+      <th class="num" title="ชั่วโมงล่าสุด: คลิป ÷ ใบปะหน้า">อัตรา 1 ชม.</th>
+      <th class="num">คิว</th><th>คลิปล่าสุด</th>
     </tr></thead>
     <tbody id="stations"></tbody>
   </table>
@@ -73,6 +75,7 @@
   <div id="alerts"><div class="empty">— ยังไม่มี —</div></div>
 </section>
 
+<script src="/session.js"></script>
 <script>
 (function () {
   'use strict';
@@ -80,6 +83,7 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
   function timeOf(s) { return s ? new Date(s).toLocaleTimeString('th-TH') : '—'; }
+  function today() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }); }
 
   function card(k, v, n, cls) {
     return '<div class="card ' + (cls || '') + '"><div class="k">' + esc(k) + '</div>' +
@@ -112,7 +116,13 @@
     var diskCls = disk.disk_level === 'stop' ? 'bad'
       : (disk.disk_level === 'squeeze' || disk.disk_level === 'warn') ? 'warn' : 'good';
 
+    var noVidToday = (d.stations || []).reduce(function (a, s) { return a + ((s.today || {}).no_video || 0) + ((s.today || {}).corrupt || 0); }, 0);
+    var clipsToday = (d.stations || []).reduce(function (a, s) { return a + ((s.today || {}).clips || 0); }, 0);
+    var notRec = (d.stations || []).filter(function (s) { return ['no_video', 'no_listener', 'camera'].indexOf(s.state) !== -1; }).length;
+
     $('cards').innerHTML =
+      card('ไม่มีวิดีโอ วันนี้', noVidToday, 'จาก ' + clipsToday + ' คลิป', noVidToday ? 'bad' : 'good') +
+      card('โต๊ะที่ไม่ได้บันทึกตอนนี้', notRec, null, notRec ? 'bad' : 'good') +
       card('คลิปต่อใบปะหน้า', rateTxt,
            'ใบปะหน้า ' + (r.total_tag || 0) + ' · คลิป ' + (r.total_commit || 0), rateCls) +
       card('โต๊ะที่ต่ออยู่', conn + '/' + totalSt, null, conn === 0 ? 'warn' : 'good') +
@@ -129,27 +139,42 @@
     var byStation = {};
     ((r.by_station) || []).forEach(function (s) { byStation[s.station_id] = s; });
 
+    // สถานะคำนวณที่เซิร์ฟเวอร์ (R6.3) — แยก "ต่ออยู่และบันทึกจริง" ออกจาก "ต่ออยู่แต่ไม่ได้บันทึก"
+    // ของเดิมขึ้นเขียว "ต่ออยู่" ทั้งสองแบบ ช่วงดับ 12 ก.ย. 2026 จึงเขียวทั้งวัน
+    var STATE = {
+      recording:   ['on',  '● กำลังบันทึก', false],
+      ready:       ['on',  'พร้อม', false],
+      no_video:    ['bad', '⚠️ ต่ออยู่แต่ไม่ได้บันทึก', true],
+      no_listener: ['bad', '⚠️ หน้าต่างอัดขาดสัญญาณ', true],
+      camera:      ['bad', '⚠️ กล้องหลุด', true],
+      lost:        ['off', 'ขาดการติดต่อ', false],
+      off:         ['off', 'ไม่ได้ตั้ง', false],
+    };
     $('stations').innerHTML = (d.stations || []).map(function (s) {
       var m = byStation[s.station_id] || {};
+      var t = s.today || {};
       var rate = m.rate == null ? '—' : (m.rate * 100).toFixed(0) + '%';
-      // โต๊ะที่มีใบปะหน้าแต่ไม่มีเครื่องต่อ หรือต่ออยู่แต่กล้องหลุด = กำลังแพ็คโดยไม่ได้อัด ต้องเห็นชัดที่สุด
-      var danger = (!s.connected && (m.tag || 0) > 0) || (s.connected && s.camera_ready === false);
-      var statusHtml = !s.connected
-        ? '<span class="pill off">' + (s.stale ? 'ขาดการติดต่อ' : 'ไม่ได้ตั้ง') + '</span>'
-        : (s.camera_ready === false
-            ? '<span class="pill" style="background:rgba(182,35,36,.2);color:#b62324">⚠️ กล้องหลุด</span>'
-            : '<span class="pill on">ต่ออยู่</span>');
+      var st = STATE[s.state] || ['off', s.state || '—', false];
+      // มีใบปะหน้าแต่ไม่มีเครื่องต่อ = กำลังแพ็คโดยไม่ได้อัด
+      var danger = st[2] || (!s.connected && (m.tag || 0) > 0);
+      var bad = (t.no_video || 0) + (t.corrupt || 0);
       return '<tr' + (danger ? ' style="background:rgba(182,35,36,.09)"' : '') + '>' +
         '<td><code>' + esc(s.station_id) + '</code></td>' +
-        '<td>' + statusHtml + '</td>' +
+        '<td><span class="pill ' + st[0] + '"' + (st[0] === 'bad' ? ' style="background:rgba(182,35,36,.2);color:#b62324"' : '') + '>' +
+          esc(st[1]) + '</span>' +
+          (s.video_problem_text && s.state === 'no_video' ? '<div style="font-size:11px;opacity:.75">' + esc(s.video_problem_text) + '</div>' : '') + '</td>' +
         '<td>' + esc(s.device_name || '—') + '</td>' +
-        '<td class="num">' + (m.tag || 0) + '</td>' +
-        '<td class="num">' + (m.commit || 0) + '</td>' +
+        '<td class="num">' + (t.clips || 0) + '</td>' +
+        '<td class="num"' + (bad ? ' style="color:#b62324;font-weight:700"' : '') + '>' +
+          (bad ? '<a href="/clips.html?station=' + encodeURIComponent(s.station_id) + '&from=' + today() + '&to=' + today() + '&problem=any" style="color:inherit">' + bad + '</a>' : '0') + '</td>' +
         '<td class="num">' + rate + '</td>' +
         '<td class="num">' + (s.queue_depth != null ? s.queue_depth : '—') + '</td>' +
-        '<td>' + timeOf(s.last_seen_at) + '</td>' +
+        '<td>' + timeOf(t.last_at) + '</td>' +
       '</tr>';
     }).join('');
+    if (d.today && d.today.ok === false) {
+      $('stations').insertAdjacentHTML('beforeend', '<tr><td colspan="8" class="empty">ต่อฐานข้อมูลไม่ได้ — ตัวเลขคลิปวันนี้ยังไม่แสดง</td></tr>');
+    }
 
     // ── แจ้งเตือน ──
     var a = d.alerts || [];
@@ -174,6 +199,6 @@
 </script>
 
 <script src="/panel.js"></script>
-<script>PackvideoPanel.mount({ role: 'lead' });</script>
+<script>PackvideoPanel.mount({ role: 'lead' }); PackvideoSession.me();</script>
 </body>
 </html>

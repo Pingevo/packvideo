@@ -12,6 +12,10 @@ import { log } from '../log.js';
 /** @type {Map<string, Set<import('express').Response>>} */
 const channels = new Map();
 
+/** station → เวลาที่ตัวรับตัวสุดท้ายหลุด · ไม่มีในนี้ = ไม่เคยมีใครต่อตั้งแต่เซิร์ฟเวอร์เริ่ม */
+const emptySince = new Map();
+const bootedAt = Date.now();
+
 /** nginx ตัดการเชื่อมต่อที่เงียบเกิน proxy_read_timeout — ต้องส่งอะไรสักอย่างก่อนถึงเวลานั้น */
 const PING_MS = 20_000;
 
@@ -27,6 +31,7 @@ export function subscribe(stationId, res) {
   const set = channels.get(stationId) ?? new Set();
   set.add(res);
   channels.set(stationId, set);
+  emptySince.delete(stationId);
 
   const ping = setInterval(() => {
     try { res.write(': ping\n\n'); } catch { /* ปิดไปแล้ว ปล่อยให้ close จัดการ */ }
@@ -37,7 +42,10 @@ export function subscribe(stationId, res) {
     const s = channels.get(stationId);
     if (s) {
       s.delete(res);
-      if (!s.size) channels.delete(stationId);
+      if (!s.size) {
+        channels.delete(stationId);
+        emptySince.set(stationId, Date.now());
+      }
     }
     log.debug({ station_id: stationId, remaining: channels.get(stationId)?.size ?? 0 }, 'ตัวอัดตัดการเชื่อมต่อ');
   };
@@ -71,4 +79,15 @@ export function connectedStations() {
 
 export function listenerCount(stationId) {
   return channels.get(stationId)?.size ?? 0;
+}
+
+/**
+ * ไม่มีหน้าต่างอัดรับสัญญาณมานานกี่มิลลิวินาที (0 = มีคนฟังอยู่)
+ *
+ * EventSource ต่อใหม่เองภายในไม่กี่วินาทีเวลาเน็ตสะดุดหรือเซิร์ฟเวอร์รีสตาร์ท
+ * ถ้าเตือนตั้งแต่วินาทีแรกที่หลุด แถบบนหน้าแพ็คจะแดงวูบๆ จนพนักงานเลิกสนใจ
+ */
+export function noListenerFor(stationId) {
+  if (listenerCount(stationId) > 0) return 0;
+  return Date.now() - (emptySince.get(stationId) ?? bootedAt);
 }
