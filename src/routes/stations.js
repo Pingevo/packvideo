@@ -43,6 +43,7 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
     ok: true,
     station_id: station.station_id,
     connected: station.connected,
+    camera_ready: station.connected ? (station.camera_ready !== false) : false,
     device_name: station.device_name ?? null,
     queue_depth: station.queue_depth ?? 0,
     recording: !!station.recording,
@@ -91,9 +92,9 @@ stationsRouter.post('/stations/:id/claim', json, (req, res) => {
 /** POST /api/stations/:id/heartbeat — ต่ออายุการจับจอง ทุก 30 วินาที */
 stationsRouter.post('/stations/:id/heartbeat', json, (req, res) => {
   const {
-    client_id: clientId, queue_depth: queueDepth, app_version: appVersion, recording,
+    client_id: clientId, queue_depth: queueDepth, app_version: appVersion, recording, camera_ready: cameraReady,
   } = req.body ?? {};
-  const result = heartbeat(req.params.id, { clientId, queueDepth, appVersion, recording });
+  const result = heartbeat(req.params.id, { clientId, queueDepth, appVersion, recording, cameraReady });
   // 409 = ให้ฝั่งเครื่องรู้ว่าต้องขอจับจองใหม่ ไม่ใช่เงียบไปแล้วคิดว่ายังทำงานอยู่
   res.status(result.ok ? 200 : 409).json(result);
 });

@@ -71,11 +71,20 @@ clipsRouter.put(
   },
 );
 
+/** POST /api/clip/:clipId/finalise — ปิดและรวมไฟล์เมื่อฝั่งกล้องส่งชิ้นสุดท้ายครบแล้ว */
+clipsRouter.post('/clip/:clipId/finalise', json, async (req, res) => {
+  const allowed = ['verified', 'registered', 'manual_stop', 'unverified', 'timeout'];
+  const status = allowed.includes(req.body?.status) ? req.body.status : undefined;
+  const clip = await clips.finaliseClip(req.params.clipId, status, req.body?.note);
+  if (!clip) return res.status(404).json({ ok: false, error: 'ไม่พบคลิปนี้' });
+  res.json({ ok: true, clip: clips.toMetadata(clip) });
+});
+
 /** POST /api/clip/:clipId/close — ปิดคลิปจากฝั่งเครื่อง */
 clipsRouter.post('/clip/:clipId/close', json, async (req, res) => {
-  const allowed = ['manual_stop', 'unverified'];
+  const allowed = ['manual_stop', 'unverified', 'verified', 'registered'];
   const status = allowed.includes(req.body?.status) ? req.body.status : 'unverified';
-  const clip = await clips.close(req.params.clipId, status, req.body?.note);
+  const clip = await clips.finaliseClip(req.params.clipId, status, req.body?.note);
   if (!clip) return res.status(404).json({ ok: false, error: 'ไม่พบคลิปนี้' });
   res.json({ ok: true, clip: clips.toMetadata(clip) });
 });

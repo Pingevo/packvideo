@@ -40,9 +40,15 @@ searchRouter.get('/search', async (req, res) => {
   const from = String(req.query.from ?? '');
   const to = String(req.query.to ?? '');
   if (from || to) {
-    filter.day = {};
-    if (from) filter.day.$gte = from;
-    if (to) filter.day.$lte = to;
+    filter.started_at = {};
+    if (from) {
+      const fromDate = new Date(`${from}T00:00:00+07:00`);
+      filter.started_at.$gte = isNaN(fromDate.getTime()) ? from + 'T00:00:00.000Z' : fromDate.toISOString();
+    }
+    if (to) {
+      const toDate = new Date(`${to}T23:59:59.999+07:00`);
+      filter.started_at.$lte = isNaN(toDate.getTime()) ? to + 'T23:59:59.999Z' : toDate.toISOString();
+    }
   }
 
   if (and.length) filter.$and = and;

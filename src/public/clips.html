@@ -147,7 +147,7 @@
       '<div class="meta">' + esc(c.tracking_no || '—') + ' · ' + secs(c.duration_ms) +
       ' · ' + dt(c.started_at) +
       (c.pinned ? ' · 📌 ตรึงไว้' : '') +
-      (c.media_available ? '' : ' · <b>ไม่มีวิดีโอแล้ว</b>') +
+      (c.media_available ? '' : (c.media_deleted_at ? ' · <b>หมดอายุ (ลบแล้ว)</b>' : ' · <b style="color:#b62324">ไม่มีไฟล์วิดีโอ (กล้องไม่บันทึก)</b>')) +
       '</div></div>';
   }
 

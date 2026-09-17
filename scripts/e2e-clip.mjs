@@ -70,6 +70,11 @@ console.log(`\nทดสอบ ${BASE}\n`);
 
   // สแกนเลขที่ตรง (มีขีดคั่นด้วย ต้องยังตรงอยู่)
   await signal({ event: 'scan', value: 'SPX-999-888-777' });
+  await fetch(`${BASE}/api/clip/${clipId}/finalise`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'verified' }),
+  });
   await sleep(400);
   clip = await findByTrace('250808E2E001');
   check('สแกนตรง → ปิดคลิปเป็น verified', clip?.status === 'verified', clip?.status);

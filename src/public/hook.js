@@ -40,6 +40,24 @@
   }
 
   /**
+   * TikTok — หน้าตาเดียวกับ Lazada เป๊ะ: /tik/imei ยิง check_low_price แล้ว redirect
+   * เต็มหน้าไป /tik/imei/airway/... เสมอ ไม่มี AJAX endpoint อื่นให้เกาะ จึงเกาะจุดนี้
+   * เหมือนกัน (Tiktok.CheckImeiLowPrice ตอบ {found, order_id, is_low_price,
+   * is_clearance_low_price} ฟอร์แมตเดียวกับ Lazada.CheckImeiLowPrice)
+   */
+  var TIK_CHECK_PATH = '/tik/imei/check_low_price';
+
+  function decideTiktokCheck(r) {
+    if (!r || typeof r !== 'object') return { ordersn: null };
+    var found = r.found === true;
+    return {
+      ordersn: found && r.order_id != null ? String(r.order_id) : (found ? 'unknown' : null),
+      is_low_price: r.is_low_price === true,
+      is_cancelled: false,
+    };
+  }
+
+  /**
    * Shopee Express — หน้า /shp/express/api/ship คนละ endpoint กับหน้า imei ปกติ
    * ยิง /shp/express/api/check_imei ไม่ใช่ /shopee/imei/get_order_new เลยไม่เคยเข้า
    * เงื่อนไข API_PATH ด้านบนสักครั้ง — response เป็น {success, order_sn, msg} ตรงๆ
@@ -268,7 +286,8 @@
           if (!opts) return;
           if (String(opts.url).indexOf(KOL_ADD_PATH) !== -1) return onKolScan(opts.data);
           if (String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1 ||
-              String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1) {
+              String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1 ||
+              String(opts.url).indexOf(TIK_CHECK_PATH) !== -1) {
             return onScan(fieldFrom(opts.data, 'imei'), fieldFrom(opts.data, 'user'));
           }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
@@ -294,6 +313,9 @@
           if (String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1) {
             return onResult(decideExpressCheck(data));
           }
+          if (String(opts.url).indexOf(TIK_CHECK_PATH) !== -1) {
+            return onResult(decideTiktokCheck(data));
+          }
           if (String(opts.url).indexOf(API_PATH) === -1) return;
           onResult(data);
         } catch (err) { swallow(err); }
@@ -305,7 +327,8 @@
           if (!opts) return;
           var isTracked = String(opts.url).indexOf(API_PATH) !== -1 ||
             String(opts.url).indexOf(LAZ_CHECK_PATH) !== -1 ||
-            String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1;
+            String(opts.url).indexOf(EXPRESS_CHECK_PATH) !== -1 ||
+            String(opts.url).indexOf(TIK_CHECK_PATH) !== -1;
           if (!isTracked) return;
           if (ctx.trace_id) {
             beacon('abort', { trace_id: ctx.trace_id, reason: 'api_error' });
@@ -464,7 +487,8 @@
       'font:12px system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;' +
       'background:#1a1a1a;color:#eee;box-shadow:0 2px 10px rgba(0,0,0,.3);opacity:.9}' +
       '#' + PILL_ID + '.pv-bad{background:#b3261e;color:#fff;cursor:pointer;opacity:1;' +
-      'font-size:13px;font-weight:700}' +
+      'font-size:13px;font-weight:700;animation:pv-alarm 1.2s ease-in-out infinite}' +
+      '@keyframes pv-alarm{0%,100%{box-shadow:0 2px 10px rgba(0,0,0,.3)}50%{box-shadow:0 0 16px #f85149;background:#d73a49}}' +
       '#' + PILL_ID + '.pv-warn{background:#9a6700;color:#fff;opacity:1}' +
       // เขียว = พร้อม ไม่กะพริบ · แดงกะพริบ = กำลังบันทึกจริง ให้เหมือนหน้าต่างอัด
       '#' + PILL_ID + ' .pv-live{width:9px;height:9px;border-radius:50%;background:#2da44e}' +
@@ -646,6 +670,21 @@
     } catch (e) { swallow(e); }
   }
 
+  var lastCameraAlertAt = 0;
+  function alertCameraSound() {
+    if (Date.now() - lastCameraAlertAt < 25000) return;
+    lastCameraAlertAt = Date.now();
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.2, 0.4].forEach(function (t) {
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.frequency.value = 650; g.gain.value = 0.2;
+        o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.15);
+      });
+    } catch (e) {}
+  }
+
   function renderPill(st) {
     if (!UI_ENABLED) return;
     ensureStyle();
@@ -654,7 +693,9 @@
       el = document.createElement('button');
       el.id = PILL_ID;
       el.type = 'button';
-      el.onclick = function () { if (lastStatus && !lastStatus.connected) openRecorder(true); };
+      el.onclick = function () {
+        if (lastStatus && (!lastStatus.connected || lastStatus.camera_ready === false)) openRecorder(true);
+      };
       // สร้างลูกครั้งเดียวแล้วอัปเดตแค่ข้อความ — ถ้าเขียน innerHTML ทับทุกรอบ จุดจะถูก
       // สร้างใหม่ทุก 15 วินาที แล้ว animation เริ่มนับหนึ่งใหม่ตลอด กะพริบไม่เป็นจังหวะ
       el.appendChild(document.createElement('span')).className = 'pv-live';
@@ -669,6 +710,10 @@
     } else if (!st.connected) {
       cls = 'pv-bad';
       text = 'หน้าต่างอัดไม่ได้เปิด — กดตรงนี้เพื่อเปิด';
+    } else if (st.camera_ready === false) {
+      cls = 'pv-bad';
+      text = '⚠️ กล้องไม่ทำงาน / กล้องหลุด · ' + st.station_id;
+      alertCameraSound();
     } else if (!st.recording_allowed) {
       cls = 'pv-warn';
       text = 'ดิสก์เต็ม หยุดบันทึกชั่วคราว · ' + st.station_id;

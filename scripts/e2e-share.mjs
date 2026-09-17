@@ -42,6 +42,11 @@ await sleep(150);
 await signal({ event: 'tag', tracking_no: 'SPXSHARE001' });
 await sleep(150);
 await signal({ event: 'scan', value: 'SPXSHARE001' });
+await fetch(`${BASE}/api/clip/${clipId}/finalise`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ status: 'verified' }),
+});
 await sleep(600);
 check('เตรียมคลิปสำหรับทดสอบได้', !!clipId, clipId);
 

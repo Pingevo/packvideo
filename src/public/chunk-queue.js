@@ -87,6 +87,48 @@
     return tx(this.db, 'readonly', function (store) { return store.count(); });
   };
 
+  /** นับจำนวนชิ้นที่ค้างอยู่ของคลิปหนึ่งตัว */
+  ChunkQueue.prototype.countClip = function (clipId) {
+    if (!this.db) return Promise.resolve(0);
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var count = 0;
+      var t = self.db.transaction(STORE, 'readonly');
+      var store = t.objectStore(STORE);
+      var req = store.openCursor();
+      req.onsuccess = function () {
+        var cur = req.result;
+        if (!cur) return;
+        if (cur.value.clip_id === clipId) count++;
+        cur.continue();
+      };
+      t.oncomplete = function () { resolve(count); };
+      t.onerror = function () { reject(t.error); };
+    });
+  };
+
+  /** รอให้ทุกชิ้นของ clipId ถูกส่งสำเร็จหรือถูกนำออกจากคิว */
+  ChunkQueue.prototype.flush = function (clipId, timeoutMs) {
+    var self = this;
+    timeoutMs = timeoutMs || 10000;
+    var t0 = Date.now();
+    return new Promise(function (resolve) {
+      function check() {
+        self.countClip(clipId).then(function (n) {
+          if (n === 0 && !self.sending) {
+            resolve();
+          } else if (Date.now() - t0 > timeoutMs) {
+            resolve();
+          } else {
+            setTimeout(check, 100);
+          }
+        }).catch(function () { resolve(); });
+      }
+      self.pump();
+      check();
+    });
+  };
+
   /** ชิ้นที่ต้องส่งถัดไป — เรียงตาม key จึงได้ตามลำดับที่อัดมา */
   ChunkQueue.prototype.next = function () {
     if (!this.db) return Promise.resolve(null);

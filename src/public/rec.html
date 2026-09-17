@@ -84,7 +84,10 @@
   'use strict';
 
   var VERSION = '0.1.0';
-  var K = { station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id' };
+  var K = {
+    station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id',
+    device: 'packvideo.device_name',
+  };
 
   var station = localStorage.getItem(K.station);
   if (!station) {
@@ -97,12 +100,19 @@
   var S = {
     clipId: null, ordersn: null, tracking: null,
     recorder: null, stream: null, seq: 0, startedAt: 0,
-    queueDepth: 0, allowed: true,
+    queueDepth: 0, allowed: true, cameraReady: false,
     timeslice: 1000, videoBps: 1000000,
   };
 
   function $(id) { return document.getElementById(id); }
   function setText(id, v) { $(id).textContent = v; }
+
+  function isCameraLive() {
+    if (!S.stream || !S.cameraReady) return false;
+    var tracks = S.stream.getVideoTracks();
+    if (!tracks.length) return false;
+    return tracks[0].readyState === 'live' && !tracks[0].muted;
+  }
 
   // ── กล้อง ───────────────────────────────────────────────────
   /**
@@ -156,8 +166,10 @@
       if (!fake) return realCamera();
       var s = fakeCameraStream();
       S.stream = s;
+      S.cameraReady = true;
       $('preview').srcObject = s;
       warn('โหมดสาธิต — ภาพที่บันทึกไม่ใช่ภาพจากกล้องจริง');
+      sendHeartbeat();
       return s;
     });
   }
@@ -171,12 +183,35 @@
     };
     return navigator.mediaDevices.getUserMedia(constraints).then(function (s) {
       S.stream = s;
+      S.cameraReady = true;
       $('preview').srcObject = s;
+      clearWarn();
       // กล้องถูกถอดกลางกะต้องขึ้นแดงทันที ไม่ใช่เงียบไปเฉยๆ
       s.getVideoTracks().forEach(function (t) {
-        t.onended = function () { warn('กล้องหลุด — เสียบใหม่แล้วรีเฟรชหน้านี้'); };
+        t.onended = function () {
+          S.stream = null;
+          S.cameraReady = false;
+          warn('กล้องหลุด — เสียบใหม่แล้วรีเฟรชหน้านี้');
+          sendHeartbeat();
+        };
+        t.onmute = function () {
+          S.cameraReady = false;
+          warn('สัญญาณกล้องหยุดชั่วคราว (Muted)');
+          sendHeartbeat();
+        };
+        t.onunmute = function () {
+          S.cameraReady = true;
+          clearWarn();
+          sendHeartbeat();
+        };
       });
+      sendHeartbeat();
       return s;
+    }).catch(function (err) {
+      S.stream = null;
+      S.cameraReady = false;
+      sendHeartbeat();
+      throw err;
     });
   }
 
@@ -192,13 +227,28 @@
   function beginClip(clipId) {
     if (S.recorder) endRecorder();
     if (!S.allowed) { warn('ดิสก์เต็ม — ไม่ได้บันทึกคลิปนี้'); return; }
-    if (!S.stream) { warn('ยังไม่มีภาพจากกล้อง'); return; }
+    if (!isCameraLive()) {
+      warn('กล้องไม่พร้อมหรือกล้องหลุด — ไม่ได้บันทึกคลิปนี้');
+      sendHeartbeat();
+      return;
+    }
 
     S.clipId = clipId; S.seq = 0; S.startedAt = Date.now();
     var mime = pickMime();
     try {
       S.recorder = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: S.videoBps });
-    } catch (e) { warn('เริ่มอัดไม่ได้: ' + e.message); return; }
+    } catch (e) {
+      warn('เริ่มอัดไม่ได้: ' + e.message);
+      S.cameraReady = false;
+      sendHeartbeat();
+      return;
+    }
+
+    S.recorder.onerror = function (e) {
+      warn('MediaRecorder ขัดข้อง: ' + (e.error ? e.error.message : 'error'));
+      S.cameraReady = false;
+      sendHeartbeat();
+    };
 
     S.recorder.ondataavailable = function (e) {
       if (!e.data || !e.data.size || !S.clipId) return;
@@ -255,11 +305,17 @@
       timer = setTimeout(function () {
         btn.classList.remove('arming');
         var id = S.clipId;
-        finishClip();
-        fetch('/api/clip/' + encodeURIComponent(id) + '/close', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'manual_stop' }),
-        }).catch(function () {});
+        if (!id) return;
+        setRec(false);
+        endRecorder();
+        queue.flush(id).then(function () {
+          return fetch('/api/clip/' + encodeURIComponent(id) + '/finalise', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'manual_stop' }),
+          });
+        }).catch(function () {}).then(function () {
+          if (S.clipId === id) finishClip();
+        });
       }, 1000);
     }
     function up() { clearTimeout(timer); btn.classList.remove('arming'); }
@@ -304,12 +360,33 @@
       S.tracking = d.tracking_no; setText('tracking', d.tracking_no || '—');
     });
 
-    es.addEventListener('stop', function () {
-      // ปล่อยชิ้นสุดท้ายออกจาก MediaRecorder ก่อนแล้วค่อยเคลียร์สถานะ
+    es.addEventListener('stop', function (e) {
+      var d = {};
+      try { d = JSON.parse(e.data); } catch (err) {}
       var id = S.clipId;
-      endRecorder();
-      setTimeout(function () { if (S.clipId === id) finishClip(); }, 400);
+      if (!id) return;
       setRec(false);
+
+      // ให้เวลา MediaRecorder เก็บภาพหลังสแกนอีกเล็กน้อย (~600ms) เพื่อให้เห็นกล่องตอนจบชัดเจน
+      setTimeout(function () {
+        if (S.recorder && S.recorder.state !== 'inactive') {
+          try { S.recorder.stop(); } catch (err) {}
+        }
+        S.recorder = null;
+
+        // รอให้ ChunkQueue ส่งชิ้นสุดท้าย (และชิ้นค้างทั้งหมด) ขึ้นเซิร์ฟเวอร์จนครบ
+        queue.flush(id).then(function () {
+          return fetch('/api/clip/' + encodeURIComponent(id) + '/finalise', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: d.status || 'verified' }),
+          });
+        }).catch(function (err) {
+          console.warn('[packvideo] finalise error:', err);
+        }).then(function () {
+          if (S.clipId === id) finishClip();
+        });
+      }, 600);
     });
 
     es.addEventListener('mismatch', function (e) {
@@ -346,6 +423,30 @@
     setText('elapsed', Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'));
   }, 500);
 
+  // การจับจองโต๊ะอยู่ในหน่วยความจำเซิร์ฟเวอร์ล้วนๆ (ยังไม่ลง DB) — เซิร์ฟเวอร์รีสตาร์ท
+  // ครั้งเดียวก็ลืมหมดทุกโต๊ะ ทั้งที่หน้านี้ยังเปิดอัดอยู่จริง heartbeat ครั้งต่อไปจะโดน
+  // 409 (จับจองหมดอายุ) เงียบๆ ตลอดไป เพราะโค้ดเดิม .catch() ทิ้งแล้วไม่เคยเช็ค status —
+  // ผลคือหน้าเลือกโต๊ะขึ้น "ไม่ได้เชื่อมต่อ" ค้างแม้กล้องกำลังอัดอยู่จริง ต้องมีคนไปเปิด
+  // หน้าตั้งค่าใหม่เองถึงจะกลับมา ต้องจับจองซ้ำเองตรงนี้แทนไม่ให้ต้องพึ่งคน
+  var reclaiming = false;
+
+  function reclaim() {
+    if (reclaiming) return;
+    reclaiming = true;
+    fetch('/api/stations/' + encodeURIComponent(station) + '/claim', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: localStorage.getItem(K.client),
+        device_name: localStorage.getItem(K.device) || 'ไม่ทราบชื่อ',
+      }),
+    }).then(function (r) {
+      reclaiming = false;
+      // เครื่องอื่นแย่งโต๊ะนี้ไปแล้วจริงๆ (409) ระหว่างที่เราหลุด — ต้องบอกคนหน้างาน
+      // ไม่ใช่แค่ลองใหม่เงียบๆ เพราะแปลว่าคลิปที่กำลังอัดอยู่นี้ไม่มีโต๊ะรองรับแล้ว
+      if (!r.ok) warn('โต๊ะนี้ถูกเครื่องอื่นจับจองไปแล้ว — คลิปนี้จะไม่ถูกนับที่โต๊ะนี้อีก');
+    }).catch(function () { reclaiming = false; });
+  }
+
   function sendHeartbeat() {
     fetch('/api/stations/' + encodeURIComponent(station) + '/heartbeat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -356,8 +457,9 @@
         // หน้านี้เป็นตัวเดียวที่รู้จริงว่ากำลังบันทึกอยู่ไหม — เซิร์ฟเวอร์เดาจาก
         // สัญญาณ start/commit ได้ไม่แม่น เพราะกล้องอาจเปิดไม่ได้ทั้งที่ออเดอร์เริ่มแล้ว
         recording: !!S.clipId,
+        camera_ready: isCameraLive(),
       }),
-    }).catch(function () {});
+    }).then(function (r) { if (r.status === 409) reclaim(); }).catch(function () {});
   }
 
   setInterval(sendHeartbeat, 30000);

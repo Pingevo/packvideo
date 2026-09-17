@@ -175,7 +175,7 @@ export async function scan({ stationId, value }) {
   const expected = normalise(clip.tracking_no);
 
   if (expected && scanned === expected) {
-    await close(clip._id, 'verified');
+    await stop({ clipId: clip._id, status: 'verified' });
     return { action: 'stop', clip_id: clip._id };
   }
 
@@ -201,7 +201,7 @@ export async function scan({ stationId, value }) {
   return { action: 'no_tracking_yet', clip_id: clip._id };
 }
 
-// ── CLOSE ─────────────────────────────────────────────────────
+// ── CLOSE & STOP ─────────────────────────────────────────────
 /**
  * @param {string} clipId
  * @param {'verified'|'registered'|'manual_stop'|'unverified'|'timeout'} status
@@ -256,24 +256,69 @@ export async function photoTaken({ stationId, projectId }) {
   if (projectId) clip.project_id = projectId;
   touch(clip);
   persist(clip, 'photo', { project_id: projectId });
-  log.info({ clip_id: clip._id, project_id: projectId }, 'ถ่ายรูปกล่องแล้ว ปิดคลิป');
-  return close(clip._id, 'registered');
+  log.info({ clip_id: clip._id, project_id: projectId }, 'ถ่ายรูปกล่องแล้ว ขอปิดคลิป');
+  return stop({ clipId: clip._id, status: 'registered' });
 }
 
-export async function close(clipId, status, note) {
+const closingTimers = new Map();
+
+/**
+ * ส่งสัญญาณบอกให้กล้องหยุดอัด แล้วรอให้ชิ้นวิดีโอสุดท้ายส่งขึ้นมาจนครบ
+ */
+export async function stop({ clipId, stationId, status = 'verified', note } = {}) {
+  const clip = clipId ? clips.get(clipId) : openClipOf(stationId);
+  if (!clip || CLOSED.includes(clip.status)) return clip ?? null;
+
+  if (clip.status === 'closing') {
+    if (status) clip.target_status = status;
+    return clip;
+  }
+
+  clip.status = 'closing';
+  clip.target_status = status || 'verified';
+  if (note) clip.note = note;
+  touch(clip);
+
+  emit(clip.station_id, 'stop', {
+    clip_id: clip._id,
+    status: clip.target_status,
+    ordersn: clip.ordersn,
+    tracking_no: clip.tracking_no,
+  });
+
+  // fallback safety timer 5 วินาที เผื่อกล้องปิดแท็บหรือหลุดการเชื่อมต่อ
+  if (!closingTimers.has(clip._id)) {
+    const timer = setTimeout(async () => {
+      closingTimers.delete(clip._id);
+      await finaliseClip(clip._id);
+    }, 5000);
+    if (timer.unref) timer.unref();
+    closingTimers.set(clip._id, timer);
+  }
+
+  log.info({ clip_id: clip._id, status: clip.target_status, ordersn: clip.ordersn }, 'ส่งสัญญาณหยุดอัด (รอชิ้นสุดท้าย)');
+  return clip;
+}
+
+export async function finaliseClip(clipId, finalStatus, note) {
   const clip = clips.get(clipId);
   if (!clip || CLOSED.includes(clip.status)) {
     return clip ?? null;
   }
 
+  const timer = closingTimers.get(clipId);
+  if (timer) {
+    clearTimeout(timer);
+    closingTimers.delete(clipId);
+  }
+
+  const status = finalStatus || clip.target_status || 'verified';
   clip.status = status;
   clip.ended_at = new Date();
   clip.duration_ms = clip.ended_at - clip.started_at;
   if (note) clip.note = note;
 
-  // pin ทันทีเมื่อมีสัญญาณผิดปกติ (FR-6.3) — เคสที่จะมีปัญหาทีหลังมักเป็นเคสที่
-  // "ตอนแพ็คมันแปลกๆ" อยู่แล้ว pin ไว้ตั้งแต่วันแพ็คดีกว่าไปตามหาตอนวันที่ 31
-  // manual_stop ไม่ pin เพราะเป็นเหตุการณ์ปกติที่เกิดจากเครื่องพิมพ์ ไม่ใช่สัญญาณผิดปกติ
+  // pin ทันทีเมื่อมีสัญญาณผิดปกติ (FR-6.3)
   if (status === 'unverified' || status === 'timeout' || clip.flags.includes('mismatch')) {
     clip.pinned = true;
     clip.pin_reasons.push('anomaly');
@@ -289,17 +334,24 @@ export async function close(clipId, status, note) {
   }
 
   persist(clip, 'close', { status, note: note ?? null });
-  emit(clip.station_id, 'stop', {
-    clip_id: clip._id,
-    status,
-    ordersn: clip.ordersn,
-    tracking_no: clip.tracking_no,
-  });
   log.info(
     { clip_id: clip._id, status, ordersn: clip.ordersn, duration_ms: clip.duration_ms, bytes: clip.bytes },
-    'ปิดคลิป',
+    'ปิดคลิปและรวมไฟล์สมบูรณ์',
   );
   return clip;
+}
+
+export async function close(clipId, status, note) {
+  const clip = clips.get(clipId);
+  if (!clip || CLOSED.includes(clip.status)) {
+    return clip ?? null;
+  }
+
+  if (status === 'unverified' || status === 'timeout') {
+    return finaliseClip(clipId, status, note);
+  }
+
+  return stop({ clipId, status, note });
 }
 
 // ── รับชิ้นวิดีโอ ──────────────────────────────────────────────
@@ -346,7 +398,9 @@ async function finalise(clip) {
   }
 
   if (!names.length) {
-    clip.flags.push('empty');
+    if (!clip.flags.includes('empty')) clip.flags.push('empty');
+    clip.pinned = true;
+    if (!clip.pin_reasons.includes('empty')) clip.pin_reasons.push('empty');
     await removeTmp(clip._id);
     return;
   }
@@ -399,6 +453,7 @@ export function toMetadata(clip) {
     pin_reasons: clip.pin_reasons,
     started_at: clip.started_at?.toISOString?.() ?? null,
     ended_at: clip.ended_at?.toISOString?.() ?? null,
+    day: clip.day ?? (clip.started_at ? dayFolder(clip.started_at).day : null),
     duration_ms: clip.duration_ms ?? null,
     bytes: clip.bytes,
     chunks: clip.chunks,

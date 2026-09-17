@@ -28,6 +28,7 @@ export function listStations() {
       return {
         station_id: id,
         connected: false,
+        camera_ready: false,
         device_name: claim?.device_name ?? null,
         last_seen_at: claim?.last_seen_at ?? null,
         stale: !!claim,
@@ -44,6 +45,7 @@ export function listStations() {
       app_version: claim.app_version,
       queue_depth: claim.queue_depth,
       recording: !!claim.recording,
+      camera_ready: claim.camera_ready !== false,
       stale: false,
     };
   });
@@ -97,7 +99,7 @@ export function claimStation(stationId, { clientId, deviceName, ip, appVersion }
 }
 
 /** ต่ออายุการจับจอง — เครื่องที่ไม่ได้ถือโต๊ะนี้อยู่จะถูกปฏิเสธ ไม่ใช่แอบเขียนทับ */
-export function heartbeat(stationId, { clientId, queueDepth, appVersion, recording }) {
+export function heartbeat(stationId, { clientId, queueDepth, appVersion, recording, cameraReady }) {
   const claim = claims.get(stationId);
   if (!claim || claim.client_id !== clientId) return { ok: false, reason: 'การจับจองหมดอายุแล้ว' };
 
@@ -106,6 +108,7 @@ export function heartbeat(stationId, { clientId, queueDepth, appVersion, recordi
   if (appVersion) claim.app_version = appVersion;
   // หน้าต่างอัดเป็นตัวเดียวที่รู้ว่า MediaRecorder เดินอยู่จริงไหม
   if (typeof recording === 'boolean') claim.recording = recording;
+  if (typeof cameraReady === 'boolean') claim.camera_ready = cameraReady;
   return { ok: true };
 }
 

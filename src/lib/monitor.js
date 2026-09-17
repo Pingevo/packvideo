@@ -56,6 +56,17 @@ export async function runChecks() {
     }
   }
 
+  // ── 2.1 · โต๊ะที่ต่ออยู่แต่กล้องหลุดหรือไม่ทำงาน ─────────────
+  for (const s of connected) {
+    if (s.camera_ready === false) {
+      findings.push({
+        level: 'error',
+        key: `camera:${s.station_id}`,
+        text: `${s.station_id} ต่ออยู่แต่กล้องหลุดหรือไม่ทำงาน — ไม่ได้บันทึกวิดีโอ`,
+      });
+    }
+  }
+
   // ── 2.5 · โต๊ะที่ต่ออยู่แต่ hook.js ไม่เคยส่งสัญญาณเลย ──────
   /**
    * กฎที่เหลือทุกข้อมองไม่เห็นโต๊ะที่ hook.js ตายสนิท เพราะทุกข้อนับจากสัญญาณ
