@@ -101,7 +101,7 @@
     clipId: null, ordersn: null, tracking: null,
     recorder: null, stream: null, seq: 0, startedAt: 0,
     queueDepth: 0, allowed: true, cameraReady: false,
-    timeslice: 1000, videoBps: 1000000,
+    timeslice: 1000, videoBps: 1000000, pingMs: 20000,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -182,6 +182,13 @@
                    : { width: { ideal: 1920 }, height: { ideal: 1080 } },
     };
     return navigator.mediaDevices.getUserMedia(constraints).then(function (s) {
+      // ลองเปิดซ้ำหลังกล้องค้าง/ถูกถอดได้สตรีมใหม่ — ปล่อยตัวเก่าก่อน ไม่งั้นไฟกล้องค้างและเปิดซ้อนกัน
+      if (S.stream && S.stream !== s) {
+        S.stream.getTracks().forEach(function (t) {
+          t.onended = null; t.onmute = null; t.onunmute = null;
+          try { t.stop(); } catch (e) {}
+        });
+      }
       S.stream = s;
       S.cameraReady = true;
       $('preview').srcObject = s;
@@ -325,14 +332,59 @@
   })();
 
   // ── รับสัญญาณจากเซิร์ฟเวอร์ ─────────────────────────────────
-  function connect() {
-    var es = new EventSource('/api/stream/' + encodeURIComponent(station));
+  var es = null;
+  var esTimer = null;
+  var lastEventAt = 0;
+  var reconnectDelay = 1000;
 
-    es.onopen = function () { setText('conn', 'เชื่อมต่อแล้ว'); };
-    es.onerror = function () { setText('conn', 'ขาดการเชื่อมต่อ — กำลังต่อใหม่'); };
+  /**
+   * เปิดสาย SSE ใหม่ทั้งเส้น
+   *
+   * เบราว์เซอร์ต่อ EventSource ใหม่ให้เองเฉพาะตอนสายขาดแบบธรรมดา — ถ้าโดนตอบกลับเป็น 502
+   * (nginx เจอ upstream ไม่ตอบ) มันเลิกลองถาวร (readyState=CLOSED) และถ้าสายตายแบบ half-open
+   * (NAT ทิ้งเงียบๆ) มันไม่รู้เลย ทั้งสองแบบหน้านี้จะเปิดค้างและส่ง heartbeat ต่อไปเรื่อยๆ
+   * โดยไม่รับสัญญาณ start อีกเลย → คลิปว่างทั้งวัน จึงต้องเฝ้าเองและต่อใหม่เอง
+   */
+  function scheduleReconnect() {
+    if (esTimer) return;
+    try { if (es) es.close(); } catch (e) {}
+    es = null;
+    setText('conn', 'ขาดการเชื่อมต่อ — กำลังต่อใหม่');
+    esTimer = setTimeout(function () { esTimer = null; connect(); }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  }
+
+  // เซิร์ฟเวอร์ส่งเหตุการณ์ ping ทุก pingMs — เงียบเกิน 2.5 เท่า = สายตายแต่ไม่มีใครบอก
+  setInterval(function () {
+    if (!es) return;
+    if (Date.now() - lastEventAt > Math.max(S.pingMs * 2.5, 3000)) {
+      warn('สัญญาณจากเซิร์ฟเวอร์เงียบ — กำลังต่อใหม่');
+      scheduleReconnect();
+    }
+  }, 1000);
+
+  function connect() {
+    if (esTimer) { clearTimeout(esTimer); esTimer = null; }
+    try { if (es) es.close(); } catch (e) {}
+    es = new EventSource('/api/stream/' + encodeURIComponent(station));
+    lastEventAt = Date.now();
+
+    es.onopen = function () {
+      setText('conn', 'เชื่อมต่อแล้ว');
+      reconnectDelay = 1000;
+      lastEventAt = Date.now();
+    };
+    es.onerror = function () {
+      setText('conn', 'ขาดการเชื่อมต่อ — กำลังต่อใหม่');
+      if (es && es.readyState === 2 /* CLOSED */) scheduleReconnect();
+    };
+    ['config', 'start', 'commit', 'abort', 'tag', 'stop', 'mismatch', 'ship', 'ping'].forEach(function (name) {
+      es.addEventListener(name, function () { lastEventAt = Date.now(); });
+    });
 
     es.addEventListener('config', function (e) {
       var d = JSON.parse(e.data);
+      if (d.ping_ms) S.pingMs = d.ping_ms;
       S.allowed = d.recording !== false;
       if (d.timeslice_ms) S.timeslice = d.timeslice_ms;
       if (d.video_bps) S.videoBps = d.video_bps;
@@ -512,12 +564,43 @@
     });
   }
 
+  /**
+   * เปิดกล้องพร้อมเพดานเวลา — getUserMedia อาจค้างไม่ตอบ (มีป๊อปอัปขออนุญาตรออยู่ หรือไดรเวอร์กล้องค้าง)
+   * ตอนค้าง หน้านี้ต้องบอกให้รู้ (warn + heartbeat ว่ากล้องไม่พร้อม) ไม่ใช่เงียบ
+   * สตรีมที่มาช้าทีหลังยังใช้ได้ (startCamera ตั้งค่าเองเมื่อสำเร็จ) และไม่เปิดซ้อนขณะยังค้างอยู่
+   */
+  var camPending = false;
+  function withTimeout(promise, ms, message) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(new Error(message)); }, ms);
+      promise.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+  function ensureCamera() {
+    if (camPending) return Promise.resolve();
+    camPending = true;
+    var p = startCamera();
+    p.then(function () { camPending = false; }, function () { camPending = false; });
+    return withTimeout(p, 10000, 'กล้องไม่ตอบสนองภายใน 10 วินาที').catch(function (e) {
+      warn('เปิดกล้องไม่ได้: ' + e.message);
+      sendHeartbeat();
+    });
+  }
+
+  // กล้องถูกถอด/เปิดไม่สำเร็จ → ลองใหม่เองทุก 20 วินาที (เสียบกล้องคืนแล้วไม่ต้องมีใครมารีเฟรช)
+  // ไม่แตะระหว่างกำลังอัด
+  setInterval(function () {
+    if (!S.clipId && !S.stream) ensureCamera();
+  }, 20000);
+
   setText('station', station);
   queue.init()
     .catch(function (e) { warn('เปิดคิวในเครื่องไม่ได้: ' + e.message); })
-    .then(startCamera)
-    .then(connect)
-    .catch(function (e) { warn('เปิดกล้องไม่ได้: ' + e.message); connect(); });
+    .then(function () {
+      // ต่อ SSE ก่อนกล้องเสมอ — กล้องค้างต้องไม่ทำให้หน้าต่างอัดหูหนวก (เดิมต้องรอกล้องก่อนถึงจะต่อ)
+      connect();
+      return ensureCamera();
+    });
 })();
 </script>
 

@@ -2,11 +2,14 @@ import { Router } from 'express';
 import express from 'express';
 import { listStations, claimStation, heartbeat, releaseStation } from '../lib/stations.js';
 import { storageStatus } from '../lib/storage.js';
+import { listeningWithin } from '../lib/sse.js';
 import { signalCors } from './signal.js';
 
 export const stationsRouter = Router();
 
 const json = express.json({ limit: '8kb' });
+
+const DESK_GRACE_MS = 5000;
 
 /**
  * GET /api/stations — สถานะทุกโต๊ะ ใช้ทั้งหน้าตั้งค่าและหน้า monitor
@@ -39,11 +42,16 @@ stationsRouter.get('/desk/:stationId', signalCors, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
 
   const disk = await storageStatus();
+  // แถบบนหน้าแพ็คถามว่า "หน้าต่างอัดพร้อมรับงานไหม" ไม่ใช่ "มีเครื่องถือโต๊ะไหม"
+  // heartbeat อย่างเดียวไม่พอ — ต้องมีคนฟัง SSE อยู่จริง (ผ่อนปรนช่วงต่อใหม่ 5 วินาที กันกะพริบตอนรีเฟรชหน้า)
+  const live = station.connected && listeningWithin(station.station_id, DESK_GRACE_MS);
   res.json({
     ok: true,
     station_id: station.station_id,
-    connected: station.connected,
-    camera_ready: station.connected ? (station.camera_ready !== false) : false,
+    connected: live,
+    heartbeat_alive: station.connected,
+    listening: station.listening,
+    camera_ready: live ? (station.camera_ready !== false) : false,
     device_name: station.device_name ?? null,
     queue_depth: station.queue_depth ?? 0,
     recording: !!station.recording,

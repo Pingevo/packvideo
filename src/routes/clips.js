@@ -42,6 +42,8 @@ clipsRouter.get('/stream/:stationId', async (req, res) => {
       // การขอ 5 วินาทีจะได้ช่วงห่าง >=5 โดยไม่ได้อะไรกลับมา
       timeslice_ms: 1000,
       video_bps: 1_000_000,
+      // หน้าต่างอัดใช้เฝ้าสาย: เงียบเกิน 2.5 เท่าของค่านี้ = ต่อ SSE ใหม่
+      ping_ms: config.sse.pingMs,
       open_clip: open ? { clip_id: open._id, ordersn: open.ordersn, tracking_no: open.tracking_no } : null,
     })}\n\n`,
   );

@@ -21,9 +21,33 @@ const MIN_TAG_SAMPLE = 20;          // ต่ำกว่านี้อัต�
 const SILENCE_MS = 15 * 60 * 1000;
 const HOOK_DEAD_MS = 30 * 60 * 1000;   // ต่อมานานขนาดนี้แล้วยังไม่เคยส่งอะไรเลย = ผิดปกติ
 const QUEUE_ALERT = 20;
+const DEAF_MS = 45 * 1000;          // ต่อ SSE ใหม่ตามปกติใช้ไม่กี่วินาที — เกินนี้คือหูหนวกจริง
 
 let timer = null;
 let lastDiskLevel = null;
+let lastRecordingAllowed = null;
+
+/**
+ * โต๊ะที่ heartbeat ยังมาแต่ไม่มีหน้าต่างอัดฟัง SSE — เริ่มนับเวลาตั้งแต่เห็นครั้งแรก
+ * (เก็บไว้ระหว่างรอบตรวจ เพื่อไม่เตือนตอนรีเฟรชหน้าหรือเน็ตสะดุดแวบเดียว)
+ */
+const deafSince = new Map();
+
+function trackDeaf(stations) {
+  const now = Date.now();
+  for (const s of stations) {
+    if (s.connected && !s.listening) {
+      if (!deafSince.has(s.station_id)) deafSince.set(s.station_id, now);
+    } else {
+      deafSince.delete(s.station_id);
+    }
+  }
+}
+
+const deafForMs = (stationId) => {
+  const t = deafSince.get(stationId);
+  return t ? Date.now() - t : 0;
+};
 
 export async function runChecks() {
   const findings = [];
@@ -45,13 +69,27 @@ export async function runChecks() {
   }
 
   // ── 2 · โต๊ะที่พิมพ์ใบปะหน้าอยู่แต่ไม่มีเครื่องต่อ (FR-8.2) ──
+  trackDeaf(stations);
   for (const s of rate.by_station) {
     const station = stations.find((x) => x.station_id === s.station_id);
-    if (s.tag > 0 && station && !station.connected) {
+    if (!(s.tag > 0 && station)) continue;
+
+    if (!station.connected) {
       findings.push({
         level: 'error',
         key: `offline:${s.station_id}`,
         text: `${s.station_id} มีการพิมพ์ใบปะหน้า ${s.tag} ใบ แต่ไม่มีเครื่องต่ออยู่ — ไม่ได้บันทึกวิดีโอ`,
+      });
+    } else if (deafForMs(s.station_id) >= DEAF_MS) {
+      // heartbeat ยังมา (จึงขึ้น "ต่ออยู่") แต่ไม่มีหน้าต่างอัดรับสัญญาณ — กฎเดิมมองไม่เห็นเคสนี้เลย
+      // เกิดจริง: desk-05 หน้าต่างอัดถูกพาไปค้างที่ /setup.html ซึ่งส่ง heartbeat เอง ทั้งวันไม่มีวิดีโอ
+      findings.push({
+        level: 'error',
+        key: `deaf:${s.station_id}`,
+        text:
+          `${s.station_id} มีการพิมพ์ใบปะหน้า ${s.tag} ใบ และเครื่องยังส่ง heartbeat แต่ไม่มีหน้าต่างอัดรับสัญญาณ ` +
+          `มา ${Math.round(deafForMs(s.station_id) / 1000)} วินาทีแล้ว — น่าจะค้างหน้าตั้งค่า ` +
+          'หรือกล้องค้างตอนเปิดหน้า ไม่ได้บันทึกวิดีโอ (เปิด /rec.html บนเครื่องนั้นแล้วอนุญาตกล้อง)',
       });
     }
   }
@@ -145,9 +183,17 @@ export async function runChecks() {
   // ระดับดิสก์เปลี่ยน → บอกทุกหน้าต่างอัดทันที
   // ถ้าส่ง config แค่ตอนต่อ SSE ครั้งแรก หน้าต่างที่เปิดค้างมาตั้งแต่เช้าจะยังอัดต่อ
   // ทั้งที่ดิสก์เต็มไปแล้ว — คือกรณีที่กฎข้อนี้มีไว้ป้องกันพอดี
-  if (disk.disk_level !== lastDiskLevel) {
-    log.warn({ from: lastDiskLevel, to: disk.disk_level, used_pct: disk.used_pct }, 'ระดับดิสก์เปลี่ยน');
+  //
+  // รวมกรณี recording_allowed เปลี่ยนโดยระดับดิสก์ไม่เปลี่ยนด้วย (เช่นตรวจเขียนดิสก์พลาดชั่วคราวแล้วหาย)
+  // ไม่งั้นหน้าต่างอัดที่ได้ recording:false ตอนต่อ SSE จะหยุดอัดค้างไปจนกว่าจะต่อใหม่
+  if (disk.disk_level !== lastDiskLevel || disk.recording_allowed !== lastRecordingAllowed) {
+    if (disk.disk_level !== lastDiskLevel) {
+      log.warn({ from: lastDiskLevel, to: disk.disk_level, used_pct: disk.used_pct }, 'ระดับดิสก์เปลี่ยน');
+    } else {
+      log.warn({ recording_allowed: disk.recording_allowed }, 'สถานะบันทึกได้/ไม่ได้เปลี่ยน');
+    }
     lastDiskLevel = disk.disk_level;
+    lastRecordingAllowed = disk.recording_allowed;
     broadcast('config', {
       recording: disk.recording_allowed,
       disk_level: disk.disk_level,

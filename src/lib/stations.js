@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { listenerCount } from './sse.js';
 
 /**
  * ทะเบียนโต๊ะแพ็ค
@@ -28,6 +29,7 @@ export function listStations() {
       return {
         station_id: id,
         connected: false,
+        listening: listenerCount(id) > 0,
         camera_ready: false,
         device_name: claim?.device_name ?? null,
         last_seen_at: claim?.last_seen_at ?? null,
@@ -36,7 +38,11 @@ export function listStations() {
     }
     return {
       station_id: id,
+      // connected = มีเครื่องถือโต๊ะนี้อยู่ (heartbeat ยังมา) — หน้าตั้งค่าใช้ความหมายนี้ตัดสินว่าใครแย่งโต๊ะได้
+      // listening = มีหน้าต่างอัดรับสัญญาณ SSE อยู่จริง — สองอย่างนี้ไม่เท่ากัน:
+      // หน้า /setup.html ส่ง heartbeat เอง จึง connected=true ได้ทั้งที่ไม่มีใครรับสัญญาณ start (บั๊ก desk-05)
       connected: true,
+      listening: listenerCount(id) > 0,
       device_name: claim.device_name,
       client_id: claim.client_id,
       ip: claim.ip,

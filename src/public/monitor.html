@@ -101,7 +101,7 @@
     // ── การ์ดสรุป ──
     var r = d.rate || {};
     var disk = d.disk || {};
-    var conn = (d.stations || []).filter(function (s) { return s.connected; }).length;
+    var conn = (d.stations || []).filter(function (s) { return s.connected && s.listening !== false; }).length;
     var totalSt = (d.stations || []).length;
 
     var rateTxt = r.overall === null || r.overall === undefined
@@ -133,12 +133,16 @@
       var m = byStation[s.station_id] || {};
       var rate = m.rate == null ? '—' : (m.rate * 100).toFixed(0) + '%';
       // โต๊ะที่มีใบปะหน้าแต่ไม่มีเครื่องต่อ หรือต่ออยู่แต่กล้องหลุด = กำลังแพ็คโดยไม่ได้อัด ต้องเห็นชัดที่สุด
-      var danger = (!s.connected && (m.tag || 0) > 0) || (s.connected && s.camera_ready === false);
+      // ต่ออยู่ (heartbeat มา) แต่ไม่มีหน้าต่างอัดฟัง SSE = ค้างหน้าตั้งค่า/กล้องค้างตอนเปิดหน้า — ไม่ได้อัดจริง
+      var deaf = s.connected && s.listening === false;
+      var danger = (!s.connected && (m.tag || 0) > 0) || deaf || (s.connected && s.camera_ready === false);
       var statusHtml = !s.connected
         ? '<span class="pill off">' + (s.stale ? 'ขาดการติดต่อ' : 'ไม่ได้ตั้ง') + '</span>'
-        : (s.camera_ready === false
-            ? '<span class="pill" style="background:rgba(182,35,36,.2);color:#b62324">⚠️ กล้องหลุด</span>'
-            : '<span class="pill on">ต่ออยู่</span>');
+        : (deaf
+            ? '<span class="pill" style="background:rgba(182,35,36,.2);color:#b62324">⚠️ ไม่มีหน้าต่างอัดรับสัญญาณ</span>'
+            : (s.camera_ready === false
+                ? '<span class="pill" style="background:rgba(182,35,36,.2);color:#b62324">⚠️ กล้องหลุด</span>'
+                : '<span class="pill on">ต่ออยู่</span>'));
       return '<tr' + (danger ? ' style="background:rgba(182,35,36,.09)"' : '') + '>' +
         '<td><code>' + esc(s.station_id) + '</code></td>' +
         '<td>' + statusHtml + '</td>' +

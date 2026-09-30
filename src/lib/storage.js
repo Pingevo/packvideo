@@ -63,6 +63,16 @@ export async function ensureStorage() {
  * ใช้ `statfs` ของ Node เพื่อวัดที่ตัว **ดิสก์จริงที่ mount อยู่** ไม่ใช่ขนาดของโฟลเดอร์ —
  * เพราะ HDD ลูกนี้ mount แยกต่างหาก การไล่นับขนาดไฟล์จะช้าและได้ตัวเลขผิดความหมาย
  */
+/**
+ * ตัวนับสำหรับตั้งชื่อไฟล์ probe ให้ไม่ซ้ำกันในแต่ละการเรียก
+ *
+ * เดิมใช้ชื่อ `.probe-<pid>` ตายตัว — สองการเรียกที่ทับกัน (โต๊ะหลายตัวต่อ SSE พร้อมกัน
+ * หรือหน้าแพ็คเรียก /api/desk ชนกับ monitor) ตัวหลัง unlink ไม่เจอไฟล์ (ENOENT) แล้วรายงานว่า
+ * "เขียนไม่ได้" → recording_allowed=false → หน้าต่างอัดที่ต่อ SSE ในจังหวะนั้นหยุดอัดจนกว่าจะต่อใหม่
+ * (เจอจริงบน prod: alert `disk:ro` 29 ก.ย. 15:22)
+ */
+let probeSeq = 0;
+
 export async function storageStatus() {
   const root = path.resolve(config.storage.path);
   const out = {
@@ -89,7 +99,7 @@ export async function storageStatus() {
 
   try {
     // เขียนไฟล์จริงแล้วลบทิ้ง — สิทธิ์ในเมตาดาต้าเชื่อไม่ได้เมื่อเป็น volume ที่ mount มา
-    const probe = path.join(root, '_tmp', `.probe-${process.pid}`);
+    const probe = path.join(root, '_tmp', `.probe-${process.pid}-${++probeSeq}`);
     await fs.writeFile(probe, 'ok');
     await fs.unlink(probe);
     out.writable = true;

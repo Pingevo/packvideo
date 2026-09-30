@@ -55,6 +55,12 @@ export const config = {
 
   retentionDays: int('RETENTION_DAYS', 30),
 
+  // ช่วงห่างของเหตุการณ์ ping ที่ส่งให้หน้าต่างอัด — หน้าต่างอัดใช้เป็นตัวเฝ้าว่าสายยังอยู่ไหม
+  // (เงียบเกิน 2.5 เท่าของค่านี้ = ต่อใหม่) · ตั้งต่ำได้เฉพาะตอนทดสอบ
+  sse: {
+    pingMs: Math.max(int('SSE_PING_MS', 20000), 200),
+  },
+
   // เพดานความยาวคลิป — ปรับได้ช่วง pilot โดยไม่ต้องแก้โค้ด ดู clips.js §เพดานความปลอดภัย
   clipMaxMinutes: int('CLIP_MAX_MINUTES', 15),
 
@@ -80,7 +86,7 @@ const KNOWN_KEYS = new Set([
   'NODE_ENV', 'PORT', 'LOG_LEVEL',
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
-  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT',
+  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT', 'SSE_PING_MS',
   'FFMPEG_PATH', 'FFPROBE_PATH',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
 ]);

@@ -430,7 +430,7 @@ Content-Type: application/x-www-form-urlencoded    ← simple request ไม่�
 | `checksum` | string | คำนวณตอนปิดไฟล์ → FR-7.5 |
 | `pinned` | bool | |
 | `pin_reasons` | string[] | `case_opened` \| `manual` \| `anomaly` \| `delivery` |
-| `flags` | string[] | `mismatch` \| `cancelled` \| `no_tracking` |
+| `flags` | string[] | `mismatch` \| `cancelled` \| `no_tracking` \| `empty` (ปิดคลิปแล้วไม่มีชิ้นวิดีโอเลย) \| `no_recorder` (ตอน start ไม่มีหน้าต่างอัดรับสัญญาณ SSE สักตัว) |
 | `day` | string | `2026-08-08` — ใช้จับคู่กับโฟลเดอร์ |
 
 **index ที่ต้องมี:** `{ordersn}` · `{tracking_no}` · `{imeis}` · `{day, station_id}` · `{pinned, day}` · `{status, day}`

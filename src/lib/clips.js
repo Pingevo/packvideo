@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { log } from '../log.js';
 import { emit } from './sse.js';
 import * as repo from './repo.js';
+import { alert } from './notify.js';
 
 /**
  * วงจรชีวิตของคลิป — ดู design §3
@@ -106,9 +107,31 @@ export async function start({ traceId, stationId, imei, user }) {
 
   await fs.mkdir(path.join(TMP(), clip._id), { recursive: true });
   persist(clip, 'start', { imei });
-  emit(stationId, 'start', { clip_id: clip._id, trace_id: traceId });
+  const delivered = emit(stationId, 'start', { clip_id: clip._id, trace_id: traceId });
   log.info({ clip_id: clip._id, station_id: stationId }, 'เริ่มคลิป');
+  if (delivered === 0) flagNoRecorder(clip);
   return clip;
+}
+
+/**
+ * สัญญาณ start ไม่มีหน้าต่างอัดรับสักตัว = คลิปนี้จะไม่มีวิดีโอแน่ๆ
+ *
+ * เดิมค่าที่ emit() คืนมาถูกทิ้ง เซิร์ฟเวอร์ไม่รู้ตัวเลยจนคลิปปิดเป็น `empty` อีกหลายวินาทีต่อมา
+ * (desk-05 23–25 ก.ย.: หน้าต่างอัดค้างที่หน้าตั้งค่า คลิปว่างเป็นร้อยโดยไม่มีสัญญาณเตือนสักครั้ง)
+ * ตีธงตอนนี้เลยเพื่อให้ทีมเห็นทันทีว่า "ไม่ได้อัด" ไม่ใช่ "อัดแล้วหาย"
+ */
+function flagNoRecorder(clip) {
+  if (!clip.flags.includes('no_recorder')) clip.flags.push('no_recorder');
+  persist(clip, 'no_recorder', null);
+  log.warn(
+    { clip_id: clip._id, station_id: clip.station_id },
+    'เริ่มคลิปแต่ไม่มีหน้าต่างอัดรับสัญญาณ — คลิปนี้จะไม่มีวิดีโอ',
+  );
+  void alert(
+    `norecorder:${clip.station_id}`,
+    `${clip.station_id} เริ่มคลิปแล้วแต่ไม่มีหน้าต่างอัดรับสัญญาณ SSE — ออเดอร์ที่แพ็คอยู่จะไม่มีวิดีโอ ` +
+      '(หน้าต่างอัดอาจค้างหน้าตั้งค่า ถูกปิด หรือกล้องค้างตอนเปิดหน้า)',
+  );
 }
 
 // ── COMMIT / ABORT ────────────────────────────────────────────

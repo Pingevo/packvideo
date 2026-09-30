@@ -1,4 +1,5 @@
 import { log } from '../log.js';
+import { config } from '../config.js';
 
 /**
  * ช่องส่งสัญญาณจากเซิร์ฟเวอร์ไปหน้าต่างอัด แยกตามโต๊ะ
@@ -12,8 +13,8 @@ import { log } from '../log.js';
 /** @type {Map<string, Set<import('express').Response>>} */
 const channels = new Map();
 
-/** nginx ตัดการเชื่อมต่อที่เงียบเกิน proxy_read_timeout — ต้องส่งอะไรสักอย่างก่อนถึงเวลานั้น */
-const PING_MS = 20_000;
+/** เวลาที่ผู้ฟังคนสุดท้ายของโต๊ะหลุดไป — ใช้ผ่อนปรนช่วงต่อใหม่สั้นๆ (รีเฟรชหน้า/เน็ตสะดุด) */
+const goneAt = new Map();
 
 export function subscribe(stationId, res) {
   res.writeHead(200, {
@@ -28,16 +29,22 @@ export function subscribe(stationId, res) {
   set.add(res);
   channels.set(stationId, set);
 
+  // ต้องเป็นเหตุการณ์ที่มีชื่อ ไม่ใช่บรรทัด comment (`: ping`) — EventSource ฝั่งเบราว์เซอร์มองไม่เห็น comment
+  // หน้าต่างอัดจึงแยกไม่ออกระหว่าง "สายเงียบเพราะไม่มีงาน" กับ "สายตายแบบไม่มีใครบอก" (half-open)
+  // nginx ตัดการเชื่อมต่อที่เงียบเกิน proxy_read_timeout — ตัวนี้ก็กันไม่ให้ถึงเวลานั้นด้วย
   const ping = setInterval(() => {
-    try { res.write(': ping\n\n'); } catch { /* ปิดไปแล้ว ปล่อยให้ close จัดการ */ }
-  }, PING_MS);
+    try { res.write('event: ping\ndata: {}\n\n'); } catch { /* ปิดไปแล้ว ปล่อยให้ close จัดการ */ }
+  }, config.sse.pingMs);
 
   const cleanup = () => {
     clearInterval(ping);
     const s = channels.get(stationId);
     if (s) {
       s.delete(res);
-      if (!s.size) channels.delete(stationId);
+      if (!s.size) {
+        channels.delete(stationId);
+        goneAt.set(stationId, Date.now());
+      }
     }
     log.debug({ station_id: stationId, remaining: channels.get(stationId)?.size ?? 0 }, 'ตัวอัดตัดการเชื่อมต่อ');
   };
@@ -71,4 +78,9 @@ export function connectedStations() {
 
 export function listenerCount(stationId) {
   return channels.get(stationId)?.size ?? 0;
+}
+
+/** มีผู้ฟังอยู่ หรือเพิ่งหลุดไปไม่เกิน graceMs (รีเฟรชหน้าแล้วต่อใหม่ไม่ควรทำให้โต๊ะกะพริบแดง) */
+export function listeningWithin(stationId, graceMs) {
+  return listenerCount(stationId) > 0 || Date.now() - (goneAt.get(stationId) ?? 0) < graceMs;
 }
