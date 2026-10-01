@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { findClips, findClip, findEvents, distinctPackers } from '../lib/repo.js';
 import { dbState } from '../db.js';
 import { config } from '../config.js';
+import { MIN_VIDEO_BYTES } from '../lib/schema.js';
 
 export const searchRouter = Router();
 
@@ -29,13 +30,18 @@ export const PROBLEM_TH = {
 };
 
 const PROBLEM_FILTER = {
-  // ไฟล์ว่าง/ไม่มีไฟล์ แต่ไม่ใช่เพราะถูกลบตามกำหนด และไม่ใช่คลิปที่ถูกทิ้ง
-  no_video: { media_path: null, media_deleted_at: null, status: { $nin: ['aborted', 'pending', 'recording', 'closing'] } },
+  // ไม่มีไฟล์ หรือไฟล์มีแค่ส่วนหัว แต่ไม่ใช่เพราะถูกลบตามกำหนด และไม่ใช่คลิปที่ถูกทิ้ง
+  no_video: {
+    $or: [{ media_path: null }, { bytes: { $lt: MIN_VIDEO_BYTES } }],
+    media_deleted_at: null,
+    status: { $nin: ['aborted', 'pending', 'recording', 'closing'] },
+  },
   corrupt: { flags: 'no_header', media_offset: { $exists: false } },
   deleted: { media_deleted_at: { $ne: null } },
   any: {
     $or: [
       { media_path: null, media_deleted_at: null, status: { $nin: ['aborted', 'pending', 'recording', 'closing'] } },
+      { bytes: { $lt: MIN_VIDEO_BYTES }, media_deleted_at: null, status: { $nin: ['aborted', 'pending', 'recording', 'closing'] } },
       { flags: 'no_header', media_offset: { $exists: false } },
     ],
   },
@@ -184,7 +190,7 @@ export function present(clip) {
   const flags = clip.flags ?? [];
   let problem = null;
   if (gone) problem = 'deleted';
-  else if (!clip.media_path && !live && clip.status !== 'aborted') problem = 'no_video';
+  else if ((!clip.media_path || (clip.bytes ?? 0) < MIN_VIDEO_BYTES) && !live && clip.status !== 'aborted') problem = 'no_video';
   else if (clip.media_path && flags.includes('no_header') && !clip.media_offset) problem = 'corrupt';
 
   return {

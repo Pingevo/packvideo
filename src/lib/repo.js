@@ -1,6 +1,6 @@
 import { getDb } from '../db.js';
 import { log } from '../log.js';
-import { COL } from './schema.js';
+import { COL, MIN_VIDEO_BYTES } from './schema.js';
 
 /**
  * ที่เดียวที่แตะฐานข้อมูล — ส่วนอื่นเรียกผ่านไฟล์นี้เท่านั้น
@@ -127,11 +127,16 @@ export function clipStatsByStation(sinceIso) {
         _id: '$station_id',
         clips: { $sum: 1 },
         last_at: { $max: '$started_at' },
-        // ไม่มีวิดีโอ = ปิดแล้วแต่ไม่มีไฟล์ (ไม่นับคลิปที่ยังอัดอยู่)
+        // ไม่มีวิดีโอ = ปิดแล้วแต่ไม่มีไฟล์ หรือไฟล์มีแค่ส่วนหัว (ไม่นับคลิปที่ยังอัดอยู่)
         no_video: { $sum: { $cond: [{ $and: [
           { $not: [{ $in: ['$status', ['pending', 'recording', 'closing']] }] },
-          { $in: [{ $ifNull: ['$media_path', null] }, [null]] },
+          { $or: [
+            { $in: [{ $ifNull: ['$media_path', null] }, [null]] },
+            { $lt: [{ $ifNull: ['$bytes', 0] }, MIN_VIDEO_BYTES] },
+          ] },
         ] }, 1, 0] } },
+        // ชิ้นมาไม่ครบตามที่หน้าต่างอัดบอก — วิดีโอขาดช่วง
+        incomplete: { $sum: { $cond: [{ $in: ['incomplete', { $ifNull: ['$flags', []] }] }, 1, 0] } },
         corrupt: { $sum: { $cond: [{ $and: [
           { $in: ['no_header', { $ifNull: ['$flags', []] }] },
           { $not: [{ $gt: ['$media_offset', 0] }] },

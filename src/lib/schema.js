@@ -15,6 +15,13 @@ export const COL = {
   shareLinks: 'share_links',
 };
 
+/**
+ * ไฟล์ที่เล็กกว่านี้มีแค่ส่วนหัว (ftyp+moov ราว 760 ไบต์) ไม่มีภาพเลย — นับเป็น "ไม่มีวิดีโอ"
+ * ชิ้นแรกที่มีภาพจริงใหญ่ระดับ 100 KB ขึ้นไป · 2026-10-01 มี 14 คลิปแบบนี้ที่ monitor ไม่เตือน
+ * เพราะเดิมนับแค่ว่ามี media_path หรือ bytes > 0
+ */
+export const MIN_VIDEO_BYTES = 4096;
+
 export async function ensureIndexes() {
   const db = getDb();
   if (!db) return { ok: false, reason: 'ยังต่อฐานข้อมูลไม่ได้' };

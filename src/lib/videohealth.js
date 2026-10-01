@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { alert } from './notify.js';
+import { MIN_VIDEO_BYTES } from './schema.js';
 
 /**
  * สุขภาพ "ได้วิดีโอจริงไหม" รายโต๊ะ — มองจากฝั่งเซิร์ฟเวอร์ ไม่เชื่อคำบอกของหน้าต่างอัด
@@ -72,7 +73,8 @@ export function markVideo(stationId) {
 export function recordClosed(clip) {
   if (!clip?.station_id || clip.status === 'aborted') return;
   const s = stateOf(clip.station_id);
-  const empty = !clip.bytes;
+  // ไฟล์ที่มีแค่ส่วนหัวก็คือไม่มีวิดีโอ — เดิมนับเป็นมีวิดีโอ ช่วงไม่มีภาพติดกันจึงไม่เคยเตือน
+  const empty = (clip.bytes ?? 0) < MIN_VIDEO_BYTES;
 
   if (!empty) {
     if (s.alerted) {

@@ -77,7 +77,10 @@ clipsRouter.put(
 clipsRouter.post('/clip/:clipId/finalise', json, async (req, res) => {
   const allowed = ['verified', 'registered', 'manual_stop', 'unverified', 'timeout'];
   const status = allowed.includes(req.body?.status) ? req.body.status : undefined;
-  const clip = await clips.finaliseClip(req.params.clipId, status, req.body?.note);
+  // จำนวนชิ้นทั้งหมดที่หน้าต่างอัดอัดได้ (0.2.2 ขึ้นไป) — ยังได้ไม่ครบจะรอชิ้นที่ค้างก่อนปิดไฟล์
+  const n = req.body?.chunks;
+  const expected = Number.isInteger(n) && n >= 0 && n <= 100_000 ? n : undefined;
+  const clip = await clips.finaliseClip(req.params.clipId, status, req.body?.note, expected);
   if (!clip) return res.status(404).json({ ok: false, error: 'ไม่พบคลิปนี้' });
   res.json({ ok: true, clip: clips.toMetadata(clip) });
 });

@@ -135,14 +135,15 @@ export async function runChecks() {
   // ── 2.3 · ออเดอร์วันนี้ที่ไม่มีวิดีโอ (R6.2) ───────────────
   // quiet: ย้อนหลังแก้ไม่ได้แล้ว เตือน Telegram ซ้ำทุก 30 นาทีไม่มีประโยชน์ — videohealth เตือนตอนเกิดไปแล้ว
   for (const [stationId, t] of Object.entries(today.by_station)) {
-    if (t.no_video > 0 || t.corrupt > 0) {
+    if (t.no_video > 0 || t.corrupt > 0 || t.incomplete > 0) {
       findings.push({
         level: 'warn',
         quiet: true,
         key: `today:${stationId}`,
         text:
           `${stationId} วันนี้มีออเดอร์ที่ไม่มีวิดีโอ ${t.no_video} จาก ${t.clips} คลิป` +
-          (t.corrupt ? ` · ไฟล์เปิดไม่ได้ ${t.corrupt}` : ''),
+          (t.corrupt ? ` · ไฟล์เปิดไม่ได้ ${t.corrupt}` : '') +
+          (t.incomplete ? ` · วิดีโอขาดช่วง (ชิ้นมาไม่ครบ) ${t.incomplete}` : ''),
       });
     }
   }
@@ -305,7 +306,9 @@ async function todayStats() {
   const since = new Date(`${day}T00:00:00+07:00`).toISOString();
   const rows = await clipStatsByStation(since);
   const by_station = {};
-  for (const r of rows ?? []) by_station[r._id] = { clips: r.clips, no_video: r.no_video, corrupt: r.corrupt, last_at: r.last_at };
+  for (const r of rows ?? []) {
+    by_station[r._id] = { clips: r.clips, no_video: r.no_video, corrupt: r.corrupt, incomplete: r.incomplete, last_at: r.last_at };
+  }
   const value = { ok: rows !== null, since, by_station };
   if (rows !== null) todayCache = { at: Date.now(), value };
   return value;

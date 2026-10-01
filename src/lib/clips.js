@@ -100,6 +100,7 @@ export async function start({ traceId, stationId, imei, user }) {
     day,
     bytes: 0,
     chunks: 0,
+    received: new Set(),   // ลำดับชิ้นที่ได้แล้วจริง — chunks คือเลขสูงสุด+1 ซึ่งนับชิ้นที่ยังมาไม่ถึงด้วย
     media_path: null,
     checksum: null,
     pinned: false,
@@ -337,11 +338,15 @@ const closingTimers = new Map();
 function armCloseTimer(clip) {
   const prev = closingTimers.get(clip._id);
   if (prev) clearTimeout(prev);
-  const hardStop = (clip.closing_at?.getTime() ?? Date.now()) + 60_000;
-  const wait = Math.max(0, Math.min(config.closeGraceSec * 1000, hardStop - Date.now()));
+  // หน้าต่างอัดบอกจำนวนชิ้นแล้ว = รู้ว่ายังมีชิ้นค้างส่งอยู่จริง รอนานกว่ามาก (เน็ตช้า ไม่ใช่หน้าต่างอัดหาย)
+  const awaiting = clip.expected_chunks != null;
+  const idleMs = (awaiting ? config.lateChunkIdleSec : config.closeGraceSec) * 1000;
+  const capMs = awaiting ? config.lateChunkMaxMinutes * 60_000 : 60_000;
+  const hardStop = (clip.closing_at?.getTime() ?? Date.now()) + capMs;
+  const wait = Math.max(0, Math.min(idleMs, hardStop - Date.now()));
   const timer = setTimeout(() => {
     closingTimers.delete(clip._id);
-    void finaliseClip(clip._id);
+    void finaliseClip(clip._id, clip.final_status, clip.final_note);
   }, wait);
   if (timer.unref) timer.unref();
   closingTimers.set(clip._id, timer);
@@ -357,10 +362,33 @@ function watchFirstChunk(clip) {
   if (timer.unref) timer.unref();
 }
 
-export async function finaliseClip(clipId, finalStatus, note) {
+/**
+ * @param {number} [expectedChunks] จำนวนชิ้นที่หน้าต่างอัดอัดได้ทั้งหมด (หน้าต่างอัด 0.2.2 ขึ้นไป)
+ *   ถ้ายังได้ไม่ครบ ไม่ปิดไฟล์ตอนนี้ — รอให้ชิ้นที่ค้างในคิวเครื่องตามมา แล้วปิดเองเมื่อครบ
+ *   (หรือเมื่อเงียบเกิน LATE_CHUNK_IDLE_SEC แล้วติดป้าย incomplete)
+ *   ไม่ส่งมา = หน้าต่างอัดรุ่นเก่า ปิดทันทีแบบเดิม
+ */
+export async function finaliseClip(clipId, finalStatus, note, expectedChunks) {
   const clip = clips.get(clipId);
   if (!clip || CLOSED.includes(clip.status)) {
     return clip ?? null;
+  }
+
+  if (Number.isInteger(expectedChunks) && expectedChunks > (clip.received?.size ?? clip.chunks)) {
+    clip.expected_chunks = expectedChunks;
+    if (finalStatus) clip.final_status = finalStatus;
+    if (note) clip.final_note = note;
+    if (clip.status !== 'closing') {
+      clip.status = 'closing';
+      clip.closing_at = new Date();
+      forget(clip);
+    }
+    armCloseTimer(clip);
+    log.info(
+      { clip_id: clip._id, expected: expectedChunks, received: clip.received?.size ?? clip.chunks },
+      'รอชิ้นที่ยังค้างในคิวของหน้าต่างอัดก่อนปิดไฟล์',
+    );
+    return clip;
   }
 
   const timer = closingTimers.get(clipId);
@@ -375,8 +403,12 @@ export async function finaliseClip(clipId, finalStatus, note) {
   clip.duration_ms = clip.ended_at - clip.started_at;
   if (note) clip.note = note;
 
+  // รอจนหมดเวลาแล้วชิ้นยังมาไม่ครบ — ไฟล์ขาดช่วง ต้องเห็นในหน้าค้นหาและห้ามถูกลบตามรอบ
+  const missing = clip.expected_chunks != null && (clip.received?.size ?? clip.chunks) < clip.expected_chunks;
+  if (missing && !clip.flags.includes('incomplete')) clip.flags.push('incomplete');
+
   // pin ทันทีเมื่อมีสัญญาณผิดปกติ (FR-6.3)
-  if (status === 'unverified' || status === 'timeout' || clip.flags.includes('mismatch')) {
+  if (status === 'unverified' || status === 'timeout' || clip.flags.includes('mismatch') || missing) {
     clip.pinned = true;
     clip.pin_reasons.push('anomaly');
   }
@@ -436,9 +468,17 @@ export async function putChunk(clipId, seq, buffer) {
     const file = path.join(TMP(), clipId, String(seq).padStart(6, '0'));
     await fs.writeFile(file, buffer);
     clip.chunks = Math.max(clip.chunks, seq + 1);
+    clip.received?.add(seq);
     touch(clip);
     videohealth.markVideo(clip.station_id);
-    if (clip.status === 'closing') armCloseTimer(clip);
+    if (clip.status === 'closing') {
+      // ได้ครบตามที่หน้าต่างอัดบอกแล้ว ปิดไฟล์เลย ไม่ต้องรอตัวจับเวลา
+      if (clip.expected_chunks != null && (clip.received?.size ?? clip.chunks) >= clip.expected_chunks) {
+        void finaliseClip(clip._id, clip.final_status, clip.final_note);
+      } else {
+        armCloseTimer(clip);
+      }
+    }
     return { ok: true, seq };
   } catch (err) {
     // เขียนไม่ได้ = ปัญหาชั่วคราว (ดิสก์/สิทธิ์) ให้ฝั่งเครื่องลองใหม่ ไม่ใช่ทิ้ง

@@ -93,7 +93,7 @@
   // เปลี่ยนทุกครั้งที่แก้ตรรกะการอัด — เซิร์ฟเวอร์อ่านค่านี้จากไฟล์แล้วเทียบกับที่ heartbeat
   // ส่งมา หน้าต่างอัดที่เปิดค้างมาตั้งแต่ก่อน deploy จะถูกบอกให้รีเฟรช (หน้านี้เปิดทั้งกะ
   // ไม่รีเฟรชเอง โค้ดใหม่จึงไม่มีผลจนกว่าจะมีคนกด)
-  var VERSION = '0.2.1';
+  var VERSION = '0.2.2';
   var K = {
     station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id',
     device: 'packvideo.device_name',
@@ -306,15 +306,24 @@
     setRec(true);
   }
 
-  /** หยุดตัวอัด แล้วรอจนชิ้นสุดท้ายลงคิวและส่งขึ้นเซิร์ฟเวอร์ครบ */
+  /** หยุดตัวอัด แล้วรอจนชิ้นสุดท้ายลงคิวในเครื่อง — ไม่รอส่งขึ้นเซิร์ฟเวอร์ */
   function drain(rec) {
     if (rec.stopping) return rec.stopping;
     try { if (rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (e) {}
     // onstop ยิงหลัง dataavailable ตัวสุดท้ายตามสเปก — เพดาน 3 วินาทีกันเบราว์เซอร์ที่ไม่ยิง
     rec.stopping = Promise.race([rec.stopped, wait(3000)])
-      .then(function () { return rec.pushes; })
-      .then(function () { return queue.flush(rec.clipId, 30000); });
+      .then(function () { return rec.pushes; });
     return rec.stopping;
+  }
+
+  /** สั่งปิดคลิป — ลองซ้ำเมื่อเน็ตสะดุด เพราะถ้าไม่ถึง เซิร์ฟเวอร์จะปิดเองที่ 8 วินาทีโดยไม่รอชิ้นที่ค้าง */
+  function postFinalise(rec, body, attempt) {
+    return fetch('/api/clip/' + encodeURIComponent(rec.clipId) + '/finalise', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).catch(function (err) {
+      if (attempt >= 3) throw err;
+      return wait(1000 * (attempt + 1)).then(function () { return postFinalise(rec, body, attempt + 1); });
+    });
   }
 
   /**
@@ -322,16 +331,21 @@
    *
    * status ว่าง = ให้เซิร์ฟเวอร์ใช้สถานะที่ตัดสินไว้แล้วตอนสั่งหยุด (เช่น verified จากการ
    * สแกนใบปะหน้า) — ถ้าส่ง unverified ทับตอนคลิปใหม่มาแทรก จะทำให้คลิปที่ยิงตรงแล้วกลายเป็นไม่ตรง
+   *
+   * บอกจำนวนชิ้นทั้งหมดทันทีที่หยุดอัด แล้วปล่อยให้คิวส่งชิ้นที่ค้างตามไปเอง (0.2.2)
+   * รุ่นก่อนรอคิวส่งครบไม่เกิน 30 วินาทีแล้วค่อยสั่งปิด — 2026-10-01 เน็ตขาขึ้นช้าชิ้นละ 15–40 วินาที
+   * เซิร์ฟเวอร์ปิดไฟล์ไปก่อน ชิ้นที่ตามมาโดน 409 แล้วคิวลบทิ้งทั้งคลิป 14 คลิปเหลือแค่ส่วนหัว
+   * เซิร์ฟเวอร์ที่รู้จำนวนชิ้นจะรอจนครบ (หรือเงียบเกิน 2 นาทีค่อยปิดแบบขาดช่วง)
    */
   function retire(rec, status) {
     if (active === rec) clearActive();
     if (rec.finalising) return rec.finalising;
     retiring++;
     rec.finalising = drain(rec).then(function () {
-      return fetch('/api/clip/' + encodeURIComponent(rec.clipId) + '/finalise', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(status ? { status: status } : {}),
-      });
+      var body = { chunks: rec.seq };
+      if (status) body.status = status;
+      queue.pump();
+      return postFinalise(rec, body, 0);
     }).catch(function (err) {
       try { console.warn('[packvideo] finalise error:', err); } catch (e) {}
     }).then(function () { retiring--; });
