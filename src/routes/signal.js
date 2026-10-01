@@ -74,7 +74,7 @@ signalRouter.post('/signal', parseForm, (req, res) => {
     );
 
     // เดินวงจรชีวิตของคลิปแบบไม่รอ — ปลายทางได้ 204 ไปแล้ว
-    void dispatch(event, b, stationId).catch((err) =>
+    void dispatch(event, b, stationId, req.user?.name ?? null).catch((err) =>
       req.log.error({ err: err.message, signal: event }, 'เดินวงจรชีวิตคลิปไม่สำเร็จ'),
     );
   } catch (err) {
@@ -83,14 +83,18 @@ signalRouter.post('/signal', parseForm, (req, res) => {
   }
 });
 
-async function dispatch(event, b, stationId) {
+/**
+ * @param {string|null} loggedIn ชื่อจากบัญชี sellcenter ที่ส่ง cookie มากับ beacon (โดเมนเดียวกัน)
+ *   ชนะชื่อที่ hook.js อ่านจากหน้าเว็บเสมอ — ข้อความบนหน้าแก้ได้ บัญชีแก้ไม่ได้ (F11)
+ */
+async function dispatch(event, b, stationId, loggedIn) {
   switch (event) {
     case 'start':
       return clips.start({
         traceId: b.trace_id,
         stationId,
         imei: b.value ?? null,
-        user: b.user ?? null,
+        user: loggedIn ?? b.user ?? null,
       });
     case 'commit':
       return clips.commit({
@@ -105,7 +109,7 @@ async function dispatch(event, b, stationId) {
       return clips.tag({
         stationId,
         trackingNo: b.tracking_no || null,
-        user: b.user ?? null,
+        user: loggedIn ?? b.user ?? null,
       });
     case 'item':
       return clips.item({ stationId, imei: b.value ?? null });

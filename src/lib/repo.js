@@ -52,10 +52,14 @@ export function findClip(clipId) {
  * ถ้าไม่จัดการ มันจะค้างเป็น recording ตลอดไปแล้วทำให้ตัวเลข % verified ผิด
  * และทำให้คนอ่านหน้า monitor เข้าใจผิดว่ายังมีอะไรกำลังทำงานอยู่
  */
+const BOOTED_AT = new Date().toISOString();
+
 export function reconcileOrphans() {
   return guard('reconcileOrphans', async (conn) => {
     const res = await conn.collection(COL.clips).updateMany(
-      { status: { $in: ['pending', 'recording'] } },
+      // เฉพาะคลิปที่เริ่มก่อน process นี้เกิด — Mongo ต่อติดช้ากว่าเซิร์ฟเวอร์รับสัญญาณได้หลายวินาที
+      // ถ้าไม่จำกัด คลิปแรกๆ หลังรีสตาร์ทที่กำลังอัดจริงจะถูกเขียนทับเป็น unverified (เจอตอนทดสอบ)
+      { status: { $in: ['pending', 'recording', 'closing'] }, started_at: { $lt: BOOTED_AT } },
       {
         $set: { status: 'unverified', note: 'เซิร์ฟเวอร์รีสตาร์ทระหว่างอัด', updated_at: new Date() },
         // pin ไว้เพราะเป็นสัญญาณผิดปกติ (FR-6.3) — คลิปที่ขาดตอนคือคลิปที่ต้องมีคนดู
@@ -96,4 +100,39 @@ export function saveStation(station) {
 
 export function loadStations() {
   return guard('loadStations', (conn) => conn.collection(COL.stations).find({}).toArray());
+}
+
+/** รายชื่อพนักงานที่มีคลิปตั้งแต่วันที่กำหนด — ให้หน้าค้นหาทำตัวเลือกกรอง */
+export function distinctPackers(sinceIso) {
+  return guard('distinctPackers', (conn) =>
+    conn.collection(COL.clips).distinct('packer', { started_at: { $gte: sinceIso }, packer: { $ne: null } }),
+  );
+}
+
+/**
+ * สรุปคลิปรายโต๊ะตั้งแต่เวลาที่กำหนด — หน้าสถานะระบบ (R6.1 · R6.2)
+ *
+ * นับจากฐานข้อมูล ไม่ใช่ตัวนับในหน่วยความจำ — รีสตาร์ทแล้วไม่หาย และตอบได้จริงว่าโต๊ะนี้
+ * มีคลิปเข้ามาไหม (ตัวนับในหน่วยความจำเคยทำให้เตือนผิดว่าโต๊ะที่มีคลิป 190+ ตัว "ไม่เคยได้สัญญาณ")
+ */
+export function clipStatsByStation(sinceIso) {
+  return guard('clipStatsByStation', (conn) =>
+    conn.collection(COL.clips).aggregate([
+      { $match: { started_at: { $gte: sinceIso }, status: { $ne: 'aborted' } } },
+      { $group: {
+        _id: '$station_id',
+        clips: { $sum: 1 },
+        last_at: { $max: '$started_at' },
+        // ไม่มีวิดีโอ = ปิดแล้วแต่ไม่มีไฟล์ (ไม่นับคลิปที่ยังอัดอยู่)
+        no_video: { $sum: { $cond: [{ $and: [
+          { $not: [{ $in: ['$status', ['pending', 'recording', 'closing']] }] },
+          { $in: [{ $ifNull: ['$media_path', null] }, [null]] },
+        ] }, 1, 0] } },
+        corrupt: { $sum: { $cond: [{ $and: [
+          { $in: ['no_header', { $ifNull: ['$flags', []] }] },
+          { $not: [{ $gt: ['$media_offset', 0] }] },
+        ] }, 1, 0] } },
+      } },
+    ]).toArray(),
+  );
 }

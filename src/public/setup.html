@@ -51,7 +51,7 @@
 <h1>ตั้งค่าเครื่องโต๊ะแพ็ค
   <span data-packvideo-panel style="float:right;font-weight:400"></span>
 </h1>
-<div class="sub">ตั้งครั้งเดียวต่อเครื่อง · ค่าถูกจำไว้ในเบราว์เซอร์นี้</div>
+<div class="sub">ตั้งครั้งเดียวต่อเครื่อง · 3 ขั้น: เลือกโต๊ะ → ทดสอบกล้อง → บันทึก · <span data-packvideo-user></span></div>
 
 <section id="sec-current" style="display:none">
   <h2>ค่าปัจจุบันของเครื่องนี้</h2>
@@ -69,29 +69,33 @@
 </section>
 
 <section>
-  <h2>2 · ตั้งชื่อเครื่อง</h2>
-  <p class="hint">ใช้ตอนที่มีเครื่องตั้งโต๊ะซ้ำกัน จะได้รู้ว่าต้องไปตามหาเครื่องไหน</p>
-  <label for="device">ชื่อเครื่อง</label>
-  <input type="text" id="device" placeholder="เช่น คอมโต๊ะ 3 ริมหน้าต่าง" maxlength="60">
-</section>
-
-<section>
-  <h2>3 · เลือกกล้อง</h2>
+  <h2>2 · กล้อง และทดสอบอัดจริง</h2>
   <p class="hint">
-    ต้องกดอนุญาตใช้กล้องก่อนถึงจะเห็นรายชื่อ · ถ้าเครื่องมีกล้องตัวเดียวก็เลือกตัวนั้น
+    ทดสอบจะอัด 3 วินาที ส่งขึ้นเซิร์ฟเวอร์ แล้วเปิดไฟล์ที่เซิร์ฟเวอร์เก็บได้กลับมาให้ดู —
+    ผ่าน = คลิปจริงจะบันทึกได้ · ทำซ้ำได้ทุกเช้าก่อนเริ่มงาน
   </p>
-  <p><button id="btn-cam">ขออนุญาตใช้กล้อง</button></p>
+  <p id="cam-ask" style="display:none"><button id="btn-cam">อนุญาตให้ใช้กล้อง</button></p>
   <label for="camera">กล้อง</label>
-  <select id="camera"><option value="">— ยังไม่ได้ขออนุญาต —</option></select>
+  <select id="camera"><option value="">— กำลังหากล้อง… —</option></select>
   <video id="preview" autoplay muted playsinline style="display:none"></video>
+  <p><button id="btn-test" disabled>ทดสอบกล้อง 3 วินาที</button></p>
+  <div class="msg" id="test-result"></div>
 </section>
 
 <section>
-  <h2>4 · บันทึก</h2>
+  <h2>3 · บันทึก</h2>
+  <details id="more-opts">
+    <summary style="cursor:pointer;font-size:13px;opacity:.75">ชื่อเครื่อง (ไม่บังคับ)</summary>
+    <p class="hint">ใช้ตอนมีเครื่องตั้งโต๊ะซ้ำกัน จะได้รู้ว่าต้องไปตามหาเครื่องไหน · เว้นว่างได้ ระบบตั้งให้</p>
+    <input type="text" id="device" placeholder="เช่น คอมโต๊ะ 3 ริมหน้าต่าง" maxlength="60">
+  </details>
   <p><button class="primary" id="btn-save" disabled>บันทึกการตั้งค่า</button></p>
   <div class="msg" id="msg"></div>
+  <p id="open-rec" style="display:none"><a href="/rec.html"><button class="primary">เปิดหน้าต่างอัด</button></a></p>
 </section>
 
+<script src="/session.js"></script>
+<script src="/camtest.js"></script>
 <script>
 (function () {
   'use strict';
@@ -160,17 +164,17 @@
   }
 
   // ── กล้อง ───────────────────────────────────────────────────
-  // ชื่อกล้องจะถูกซ่อนจนกว่าจะได้รับอนุญาต จึงต้องขอสิทธิ์ก่อนแล้วค่อยไล่รายชื่อ
+  // ชื่อกล้องถูกซ่อนจนกว่าจะได้รับอนุญาต — ถ้าเคยอนุญาตแล้วเปิดให้เองทันที ไม่ต้องกดปุ่ม
   function askCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       msg('bad', 'เบราว์เซอร์นี้ใช้กล้องไม่ได้ — ต้องเปิดผ่าน https หรือ localhost เท่านั้น');
       return;
     }
-    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    var saved = get(K.camera);
+    navigator.mediaDevices.getUserMedia({ video: saved ? { deviceId: { ideal: saved } } : true, audio: false })
       .then(function (stream) {
-        state.stream = stream;
-        $('preview').srcObject = stream;
-        $('preview').style.display = 'block';
+        showStream(stream);
+        $('cam-ask').style.display = 'none';
         return navigator.mediaDevices.enumerateDevices();
       })
       .then(function (devices) {
@@ -184,30 +188,50 @@
           o.textContent = c.label || ('กล้องที่ ' + (i + 1));
           sel.appendChild(o);
         });
-        var saved = get(K.camera);
-        if (saved) sel.value = saved;
+        var active = state.stream && state.stream.getVideoTracks()[0];
+        var current = active && active.getSettings ? active.getSettings().deviceId : null;
+        sel.value = saved && cams.some(function (c) { return c.deviceId === saved; }) ? saved : (current || cams[0].deviceId);
         sel.onchange = switchPreview;
-        switchPreview();
       })
       .catch(function (e) {
-        msg('bad', 'ขออนุญาตใช้กล้องไม่สำเร็จ: ' + (e && e.message));
+        $('cam-ask').style.display = 'block';
+        $('camera').innerHTML = '<option value="">— ยังไม่ได้อนุญาต —</option>';
+        if (e && e.name !== 'NotAllowedError') msg('bad', 'เปิดกล้องไม่สำเร็จ: ' + (e && e.message));
       });
+  }
+
+  function showStream(stream) {
+    if (state.stream && state.stream !== stream) state.stream.getTracks().forEach(function (t) { t.stop(); });
+    state.stream = stream;
+    $('preview').srcObject = stream;
+    $('preview').style.display = 'block';
+    $('btn-test').disabled = false;
   }
 
   function switchPreview() {
     var id = $('camera').value;
     if (!id) return;
-    if (state.stream) state.stream.getTracks().forEach(function (t) { t.stop(); });
     navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: id } }, audio: false })
-      .then(function (s) { state.stream = s; $('preview').srcObject = s; })
-      .catch(function () {});
+      .then(showStream)
+      .catch(function (e) { msg('bad', 'เปิดกล้องตัวนี้ไม่ได้: ' + (e && e.message)); });
+  }
+
+  function testCamera() {
+    var b = $('btn-test');
+    b.disabled = true; b.textContent = 'กำลังอัด 3 วินาที…';
+    $('test-result').className = 'msg'; $('test-result').innerHTML = '';
+    PackvideoCamTest.run(state.stream, { seconds: 3, station: state.selected || get(K.station) })
+      .then(function (r) { PackvideoCamTest.render($('test-result'), r); })
+      .catch(function (e) { PackvideoCamTest.render($('test-result'), { ok: false, problems: [e.message] }); })
+      .then(function () { b.disabled = false; b.textContent = 'ทดสอบกล้องอีกครั้ง'; });
   }
 
   // ── บันทึก ──────────────────────────────────────────────────
   function save() {
     if (!state.selected) return;
-    var deviceName = ($('device').value || '').trim();
-    if (!deviceName) { msg('warn', 'ตั้งชื่อเครื่องก่อน — ใช้ตอนที่ต้องไล่หาว่าเครื่องไหนตั้งซ้ำ'); return; }
+    // ชื่อเครื่องไม่บังคับแล้ว — ขั้นตอนเดียวที่คนหน้างานข้ามบ่อยสุด ตั้งจากโต๊ะ+ระบบปฏิบัติการให้
+    var deviceName = ($('device').value || '').trim() ||
+      (state.selected + ' · ' + ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || 'เครื่อง'));
 
     $('btn-save').disabled = true;
     fetch('/api/stations/' + encodeURIComponent(state.selected) + '/claim', {
@@ -239,6 +263,7 @@
         var took = res.d.station && res.d.station.took_over_from;
         msg('ok', '<b>บันทึกแล้ว</b> — เครื่องนี้คือ <code>' + state.selected + '</code>' +
           (took ? '<br>รับช่วงต่อจากเครื่อง <code>' + took + '</code> ที่เงียบไป' : ''));
+        $('open-rec').style.display = 'block';
         showCurrent();
         loadStations();
       })
@@ -286,6 +311,9 @@
   }, 30000);
 
   $('btn-cam').onclick = askCamera;
+  $('btn-test').onclick = testCamera;
+  askCamera();
+  PackvideoSession.render();
   $('btn-save').onclick = save;
   $('btn-release').onclick = release;
   $('device').value = get(K.device) || '';
@@ -300,6 +328,6 @@
 </script>
 
 <script src="/panel.js"></script>
-<script>PackvideoPanel.mount({ role: 'packer' });</script>
+<script>PackvideoPanel.mount({ role: 'packer' }); PackvideoSession.me();</script>
 </body>
 </html>

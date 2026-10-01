@@ -5,6 +5,7 @@ import { COL } from '../lib/schema.js';
 import { appendEvent } from '../lib/repo.js';
 import { runRetention } from '../lib/retention.js';
 import { log } from '../log.js';
+import { actorOf } from '../lib/auth.js';
 
 export const pinRouter = Router();
 const json = express.json({ limit: '16kb' });
@@ -43,7 +44,7 @@ pinRouter.post('/clips/:clipId/pin', json, async (req, res) => {
   const result = await setPin(req.params.clipId, {
     pinned: true,
     reason: 'manual',
-    actor: req.body?.by ?? null,
+    actor: actorOf(req, req.body?.by),
     note: req.body?.note ?? null,
   });
   res.status(result.ok ? 200 : 404).json(result);
@@ -51,7 +52,7 @@ pinRouter.post('/clips/:clipId/pin', json, async (req, res) => {
 
 /** DELETE /api/clips/:clipId/pin — ถอนการตรึง ต้องระบุผู้ทำและเหตุผล */
 pinRouter.delete('/clips/:clipId/pin', json, async (req, res) => {
-  const by = req.body?.by;
+  const by = actorOf(req, req.body?.by);
   if (!by) return res.status(400).json({ ok: false, error: 'ต้องระบุ by — การถอนตรึงเปิดทางให้คลิปถูกลบ' });
 
   const result = await setPin(req.params.clipId, {

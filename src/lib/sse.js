@@ -13,8 +13,9 @@ import { config } from '../config.js';
 /** @type {Map<string, Set<import('express').Response>>} */
 const channels = new Map();
 
-/** เวลาที่ผู้ฟังคนสุดท้ายของโต๊ะหลุดไป — ใช้ผ่อนปรนช่วงต่อใหม่สั้นๆ (รีเฟรชหน้า/เน็ตสะดุด) */
-const goneAt = new Map();
+/** station → เวลาที่ตัวรับตัวสุดท้ายหลุด · ไม่มีในนี้ = ไม่เคยมีใครต่อตั้งแต่เซิร์ฟเวอร์เริ่ม */
+const emptySince = new Map();
+const bootedAt = Date.now();
 
 export function subscribe(stationId, res) {
   res.writeHead(200, {
@@ -28,6 +29,7 @@ export function subscribe(stationId, res) {
   const set = channels.get(stationId) ?? new Set();
   set.add(res);
   channels.set(stationId, set);
+  emptySince.delete(stationId);
 
   // ต้องเป็นเหตุการณ์ที่มีชื่อ ไม่ใช่บรรทัด comment (`: ping`) — EventSource ฝั่งเบราว์เซอร์มองไม่เห็น comment
   // หน้าต่างอัดจึงแยกไม่ออกระหว่าง "สายเงียบเพราะไม่มีงาน" กับ "สายตายแบบไม่มีใครบอก" (half-open)
@@ -43,7 +45,7 @@ export function subscribe(stationId, res) {
       s.delete(res);
       if (!s.size) {
         channels.delete(stationId);
-        goneAt.set(stationId, Date.now());
+        emptySince.set(stationId, Date.now());
       }
     }
     log.debug({ station_id: stationId, remaining: channels.get(stationId)?.size ?? 0 }, 'ตัวอัดตัดการเชื่อมต่อ');
@@ -82,5 +84,18 @@ export function listenerCount(stationId) {
 
 /** มีผู้ฟังอยู่ หรือเพิ่งหลุดไปไม่เกิน graceMs (รีเฟรชหน้าแล้วต่อใหม่ไม่ควรทำให้โต๊ะกะพริบแดง) */
 export function listeningWithin(stationId, graceMs) {
-  return listenerCount(stationId) > 0 || Date.now() - (goneAt.get(stationId) ?? 0) < graceMs;
+  if (listenerCount(stationId) > 0) return true;
+  const gone = emptySince.get(stationId);
+  return gone !== undefined && Date.now() - gone < graceMs;
+}
+
+/**
+ * ไม่มีหน้าต่างอัดรับสัญญาณมานานกี่มิลลิวินาที (0 = มีคนฟังอยู่)
+ *
+ * EventSource ต่อใหม่เองภายในไม่กี่วินาทีเวลาเน็ตสะดุดหรือเซิร์ฟเวอร์รีสตาร์ท
+ * ถ้าเตือนตั้งแต่วินาทีแรกที่หลุด แถบบนหน้าแพ็คจะแดงวูบๆ จนพนักงานเลิกสนใจ
+ */
+export function noListenerFor(stationId) {
+  if (listenerCount(stationId) > 0) return 0;
+  return Date.now() - (emptySince.get(stationId) ?? bootedAt);
 }

@@ -1,13 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { pipeline } from 'node:stream/promises';
+import { once } from 'node:events';
 import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { emit } from './sse.js';
 import * as repo from './repo.js';
 import { alert } from './notify.js';
+import * as videohealth from './videohealth.js';
 
 /**
  * วงจรชีวิตของคลิป — ดู design §3
@@ -74,8 +75,12 @@ export function listClips({ limit = 100 } = {}) {
 // ── START ─────────────────────────────────────────────────────
 export async function start({ traceId, stationId, imei, user }) {
   // สแกนตัวใหม่ทั้งที่ตัวเก่ายังไม่ปิด → ปิดตัวเก่าเป็น unverified (FR-1.8)
+  //
+  // ใช้ stop (รอชิ้นสุดท้าย) ไม่ใช่ปิดทันที — ของเดิมปิดทันที ชิ้นท้ายของคลิปเก่าที่ยังไม่ถึง
+  // จึงโดน 409 ทิ้ง และในหน้าต่างอัดรุ่นก่อนชิ้นนั้นถูกติดป้ายเป็นชิ้นแรกของคลิปใหม่
+  // ทำให้ไฟล์ใหม่ขึ้นต้นด้วย moof แล้วเปิดไม่ได้ (เจอ 324 คลิปถึง 17 ก.ย. 2026)
   const previous = openClipOf(stationId);
-  if (previous) await close(previous._id, 'unverified', 'มีการสแกนออเดอร์ใหม่ทับ');
+  if (previous) await stop({ clipId: previous._id, status: 'unverified', note: 'มีการสแกนออเดอร์ใหม่ทับ' });
 
   const now = new Date();
   const { day } = dayFolder(now);
@@ -108,7 +113,9 @@ export async function start({ traceId, stationId, imei, user }) {
   await fs.mkdir(path.join(TMP(), clip._id), { recursive: true });
   persist(clip, 'start', { imei });
   const delivered = emit(stationId, 'start', { clip_id: clip._id, trace_id: traceId });
+  watchFirstChunk(clip);
   log.info({ clip_id: clip._id, station_id: stationId }, 'เริ่มคลิป');
+  // ไม่มีหน้าต่างอัดฟังอยู่เลย = คลิปนี้ว่างแน่นอน บอกได้ทันทีไม่ต้องรอ
   if (delivered === 0) flagNoRecorder(clip);
   return clip;
 }
@@ -121,6 +128,7 @@ export async function start({ traceId, stationId, imei, user }) {
  * ตีธงตอนนี้เลยเพื่อให้ทีมเห็นทันทีว่า "ไม่ได้อัด" ไม่ใช่ "อัดแล้วหาย"
  */
 function flagNoRecorder(clip) {
+  videohealth.markNoRecorder(clip.station_id);
   if (!clip.flags.includes('no_recorder')) clip.flags.push('no_recorder');
   persist(clip, 'no_recorder', null);
   log.warn(
@@ -283,8 +291,6 @@ export async function photoTaken({ stationId, projectId }) {
   return stop({ clipId: clip._id, status: 'registered' });
 }
 
-const closingTimers = new Map();
-
 /**
  * ส่งสัญญาณบอกให้กล้องหยุดอัด แล้วรอให้ชิ้นวิดีโอสุดท้ายส่งขึ้นมาจนครบ
  */
@@ -299,8 +305,11 @@ export async function stop({ clipId, stationId, status = 'verified', note } = {}
 
   clip.status = 'closing';
   clip.target_status = status || 'verified';
+  clip.closing_at = new Date();
   if (note) clip.note = note;
   touch(clip);
+  // คลิปที่กำลังปิดไม่ใช่ "คลิปที่เปิดอยู่ของโต๊ะ" แล้ว — สแกนถัดไปต้องไม่ไปโดนคลิปนี้
+  forget(clip);
 
   emit(clip.station_id, 'stop', {
     clip_id: clip._id,
@@ -309,18 +318,43 @@ export async function stop({ clipId, stationId, status = 'verified', note } = {}
     tracking_no: clip.tracking_no,
   });
 
-  // fallback safety timer 5 วินาที เผื่อกล้องปิดแท็บหรือหลุดการเชื่อมต่อ
-  if (!closingTimers.has(clip._id)) {
-    const timer = setTimeout(async () => {
-      closingTimers.delete(clip._id);
-      await finaliseClip(clip._id);
-    }, 5000);
-    if (timer.unref) timer.unref();
-    closingTimers.set(clip._id, timer);
-  }
+  // ตัวจับเวลาสำรอง เผื่อหน้าต่างอัดไม่ยืนยัน (ปิดแท็บ/หลุด/หน้าต่างอัดรุ่นเก่าที่ยังไม่รีโหลด)
+  armCloseTimer(clip);
 
   log.info({ clip_id: clip._id, status: clip.target_status, ordersn: clip.ordersn }, 'ส่งสัญญาณหยุดอัด (รอชิ้นสุดท้าย)');
   return clip;
+}
+
+const closingTimers = new Map();
+
+/**
+ * นับถอยหลังปิดไฟล์เอง — ยืดออกทุกครั้งที่ชิ้นวิดีโอยังไหลเข้ามา
+ *
+ * เดิมนับตายตัว 5 วินาทีจากตอนสั่งหยุด ถ้าคิวในเครื่องค้างอยู่สองสามชิ้น (เน็ตช้า)
+ * ไฟล์ถูกปิดก่อนชิ้นท้ายถึง ท้ายคลิปหายซึ่งคือช่วงยิงบาร์โค้ดปิดกล่องพอดี
+ * เพดาน 60 วินาทีจากตอนสั่งหยุด กันคลิปค้างสถานะ closing ตลอดไป
+ */
+function armCloseTimer(clip) {
+  const prev = closingTimers.get(clip._id);
+  if (prev) clearTimeout(prev);
+  const hardStop = (clip.closing_at?.getTime() ?? Date.now()) + 60_000;
+  const wait = Math.max(0, Math.min(config.closeGraceSec * 1000, hardStop - Date.now()));
+  const timer = setTimeout(() => {
+    closingTimers.delete(clip._id);
+    void finaliseClip(clip._id);
+  }, wait);
+  if (timer.unref) timer.unref();
+  closingTimers.set(clip._id, timer);
+}
+
+/** ครบ N วินาทีแล้วยังไม่มีชิ้นแรก = หน้าแพ็คต้องขึ้นแดง */
+function watchFirstChunk(clip) {
+  const timer = setTimeout(() => {
+    if (clip.chunks === 0 && (clip.status === 'pending' || clip.status === 'recording')) {
+      videohealth.markNoChunks(clip.station_id);
+    }
+  }, config.noVideoAlertSec * 1000);
+  if (timer.unref) timer.unref();
 }
 
 export async function finaliseClip(clipId, finalStatus, note) {
@@ -357,6 +391,7 @@ export async function finaliseClip(clipId, finalStatus, note) {
   }
 
   persist(clip, 'close', { status, note: note ?? null });
+  videohealth.recordClosed(clip);
   log.info(
     { clip_id: clip._id, status, ordersn: clip.ordersn, duration_ms: clip.duration_ms, bytes: clip.bytes },
     'ปิดคลิปและรวมไฟล์สมบูรณ์',
@@ -402,6 +437,8 @@ export async function putChunk(clipId, seq, buffer) {
     await fs.writeFile(file, buffer);
     clip.chunks = Math.max(clip.chunks, seq + 1);
     touch(clip);
+    videohealth.markVideo(clip.station_id);
+    if (clip.status === 'closing') armCloseTimer(clip);
     return { ok: true, seq };
   } catch (err) {
     // เขียนไม่ได้ = ปัญหาชั่วคราว (ดิสก์/สิทธิ์) ให้ฝั่งเครื่องลองใหม่ ไม่ใช่ทิ้ง
@@ -437,11 +474,27 @@ async function finalise(clip) {
   const out = createWriteStream(outPath);
   let bytes = 0;
 
-  for (const name of names) {
-    const chunkPath = path.join(dir, name);
-    const stream = createReadStream(chunkPath);
-    stream.on('data', (b) => { hash.update(b); bytes += b.length; });
-    await pipeline(stream, out, { end: false });
+  const head = await findHeader(dir, names);
+  if (head.skipChunks || head.skipBytes) {
+    clip.flags.push('head_trimmed');
+    log.warn(
+      { clip_id: clip._id, skip_chunks: head.skipChunks, skip_bytes: head.skipBytes },
+      'ตัดข้อมูลของคลิปอื่นที่ติดมาหน้าไฟล์ออก',
+    );
+  } else if (!head.found) {
+    clip.flags.push('no_header');
+    log.error({ clip_id: clip._id }, 'ไม่พบส่วนหัวไฟล์วิดีโอ — ไฟล์นี้อาจเปิดไม่ได้');
+  }
+
+  // เขียนเองทีละก้อนแทน pipeline(..., { end: false }) — แบบเดิมผูก listener ค้างไว้กับ out
+  // ทุกชิ้น คลิปเกิน 10 ชิ้นขึ้น MaxListenersExceededWarning ทุกครั้ง
+  for (let i = head.skipChunks; i < names.length; i++) {
+    const start = i === head.skipChunks ? head.skipBytes : 0;
+    for await (const b of createReadStream(path.join(dir, names[i]), { start })) {
+      hash.update(b);
+      bytes += b.length;
+      if (!out.write(b)) await once(out, 'drain');
+    }
   }
   await new Promise((resolve, reject) => out.end(resolve).on('error', reject));
 
@@ -457,6 +510,31 @@ async function finalise(clip) {
   );
 
   await removeTmp(clip._id);
+}
+
+/**
+ * หาจุดเริ่มของไฟล์วิดีโอจริงในชิ้นแรกๆ
+ *
+ * ไฟล์ MP4 ที่เล่นได้ต้องขึ้นต้นด้วยกล่อง `ftyp` (WebM ขึ้นต้นด้วย EBML 1A45DFA3)
+ * หน้าต่างอัดรุ่นก่อน 2026-09 ติดป้ายชิ้นท้ายของคลิปเก่าเป็นชิ้นแรกของคลิปใหม่
+ * ไฟล์จึงขึ้นต้นด้วย `moof` ของคลิปอื่นแล้วเปิดไม่ได้ทุกโปรแกรม — ข้อมูลส่วนนั้นไม่ใช่
+ * ของคลิปนี้ตั้งแต่แรก ตัดทิ้งก่อนคำนวณ checksum จึงไม่ได้แก้หลักฐาน
+ *
+ * ดูแค่ 3 ชิ้นแรก — ชิ้นที่หลงมามีได้อย่างมากชิ้นเดียวต่อการสลับคลิป
+ */
+async function findHeader(dir, names) {
+  for (let i = 0; i < Math.min(3, names.length); i++) {
+    let buf;
+    try { buf = await fs.readFile(path.join(dir, names[i])); } catch { continue; }
+    if (buf.length >= 4 && buf.readUInt32BE(0) === 0x1a45dfa3) return { found: true, skipChunks: i, skipBytes: 0 };
+    // กล่อง ftyp จริงยาว 16–64 ไบต์ — กันเจอตัวอักษร "ftyp" บังเอิญกลางข้อมูลภาพ
+    for (let at = buf.indexOf('ftyp'); at !== -1; at = buf.indexOf('ftyp', at + 1)) {
+      if (at < 4) continue;
+      const size = buf.readUInt32BE(at - 4);
+      if (size >= 16 && size <= 64) return { found: true, skipChunks: i, skipBytes: at - 4 };
+    }
+  }
+  return { found: false, skipChunks: 0, skipBytes: 0 };
 }
 
 export function toMetadata(clip) {

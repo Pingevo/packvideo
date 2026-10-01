@@ -3,6 +3,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { ffmpeg, ffmpegCaps, ffprobeDuration } from './ffmpeg.js';
+import { ffmpegSkipArgs } from './mediafile.js';
 import { findClip } from './repo.js';
 import { appendEvent } from './repo.js';
 
@@ -98,7 +99,7 @@ export async function exportClip(clipId, opts = {}) {
     return { ok: false, error: 'ไฟล์หายไปจากดิสก์' };
   }
 
-  const sourceSec = (await ffprobeDuration(source)) ?? (clip.duration_ms ?? 0) / 1000;
+  const sourceSec = (await ffprobeDuration(source, ffmpegSkipArgs(clip))) ?? (clip.duration_ms ?? 0) / 1000;
   const startMs = Math.max(0, Math.floor(opts.startMs ?? suggestStart(clip, sourceSec)));
   // ตัดที่ 60 วินาทีเสมอ ไม่ว่าจะขอมาเท่าไร — เพดานนี้เป็นของแพลตฟอร์ม เราต่อรองไม่ได้
   const durationSec = Math.min(
@@ -143,6 +144,7 @@ export async function exportClip(clipId, opts = {}) {
   const args = [
     // -ss ก่อน -i คือค้นหาเร็ว · ใส่ -accurate_seek กันคลาดเคลื่อนที่หัวคลิป
     '-accurate_seek', '-ss', String(startMs / 1000),
+    ...ffmpegSkipArgs(clip),
     '-i', source,
     '-t', String(durationSec),
     '-vf', filters,
@@ -232,6 +234,7 @@ export async function exportFrame(clipId, { atMs = 0, actor } = {}) {
   try {
     await ffmpeg([
       '-accurate_seek', '-ss', String(atMs / 1000),
+      ...ffmpegSkipArgs(clip),
       '-i', source, '-frames:v', '1',
       '-vf', filters,
       '-q:v', '3',

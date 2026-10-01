@@ -123,7 +123,16 @@ console.log(`\nทดสอบ ${BASE}\n`);
   await signal({ event: 'start', trace_id: 'e2e-new', value: '333333333333333' });
   await sleep(350);
 
-  const old = (await getClips()).find((c) => c.clip_id === oldId);
+  // ตัวเก่ารอชิ้นสุดท้ายก่อนปิดไฟล์ (ไม่ปิดทันทีอีกแล้ว — ชิ้นท้ายเคยโดนทิ้ง)
+  let old = (await getClips()).find((c) => c.clip_id === oldId);
+  check('สแกนตัวใหม่ทับ → ตัวเก่ารอชิ้นสุดท้าย', old?.status === 'closing', old?.status);
+
+  // หน้าต่างอัดส่งชิ้นท้ายครบแล้วยืนยัน โดยไม่ระบุสถานะ → ใช้ unverified ที่ตัดสินไว้
+  await fetch(`${BASE}/api/clip/${oldId}/finalise`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+  await sleep(200);
+  old = (await getClips()).find((c) => c.clip_id === oldId);
   check('สแกนตัวใหม่ทับ → ตัวเก่าถูกปิดเป็น unverified', old?.status === 'unverified', old?.status);
   check('คลิป unverified ถูก pin อัตโนมัติ', old?.pinned === true);
 }

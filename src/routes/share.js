@@ -1,10 +1,8 @@
 import { Router } from 'express';
 import express from 'express';
-import fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
-import { config } from '../config.js';
 import { createShare, resolveShare, recordView, revokeShare, listShares } from '../lib/share.js';
+import { sendMedia } from '../lib/mediafile.js';
+import { actorOf } from '../lib/auth.js';
 
 export const shareApiRouter = Router();
 export const sharePublicRouter = Router();
@@ -14,7 +12,7 @@ const json = express.json({ limit: '8kb' });
 // ── ฝั่งทีมเคลม ───────────────────────────────────────────────
 shareApiRouter.post('/clips/:clipId/share', json, async (req, res) => {
   const result = await createShare(req.params.clipId, {
-    by: req.body?.by ?? null,
+    by: actorOf(req, req.body?.by),
     note: req.body?.note ?? null,
     ttlDays: req.body?.days,
   });
@@ -34,7 +32,7 @@ shareApiRouter.get('/clips/:clipId/shares', async (req, res) => {
 });
 
 shareApiRouter.delete('/share/:token', json, async (req, res) => {
-  const result = await revokeShare(req.params.token, { by: req.body?.by ?? null });
+  const result = await revokeShare(req.params.token, { by: actorOf(req, req.body?.by) });
   res.status(result.ok ? 200 : 404).json(result);
 });
 
@@ -67,42 +65,9 @@ sharePublicRouter.get('/s/:token/video', async (req, res) => {
   const found = await resolveShare(req.params.token);
   if (!found.ok) return res.sendStatus(found.status);
 
-  const full = path.join(path.resolve(config.storage.path), found.clip.media_path);
-  if (!full.startsWith(path.resolve(config.storage.path))) return res.sendStatus(400);
-
-  let stat;
-  try {
-    stat = await fsp.stat(full);
-  } catch {
-    return res.sendStatus(404);
-  }
-
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Accept-Ranges', 'bytes');
-  // ห้ามแคชที่ตัวกลาง ไม่งั้นลิงก์ที่ยกเลิกแล้วยังถูกเสิร์ฟจาก cache ได้
-  res.setHeader('Cache-Control', 'private, no-store');
-  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-
-  const range = req.headers.range;
-  if (!range) {
-    res.setHeader('Content-Length', stat.size);
-    return fs.createReadStream(full).pipe(res);
-  }
-
-  const m = /bytes=(\d*)-(\d*)/.exec(range);
-  if (!m) return res.status(416).end();
-  const start = m[1] ? Number.parseInt(m[1], 10) : 0;
-  const end = m[2] ? Number.parseInt(m[2], 10) : stat.size - 1;
-  if (Number.isNaN(start) || start >= stat.size || start > end) {
-    res.setHeader('Content-Range', `bytes */${stat.size}`);
-    return res.status(416).end();
-  }
-
-  const to = Math.min(end, stat.size - 1);
-  res.status(206);
-  res.setHeader('Content-Range', `bytes ${start}-${to}/${stat.size}`);
-  res.setHeader('Content-Length', to - start + 1);
-  fs.createReadStream(full, { start, end: to }).pipe(res);
+  // ห้ามแคชที่ตัวกลาง ไม่งั้นลิงก์ที่ยกเลิกแล้วยังถูกเสิร์ฟจาก cache ได้ (sendMedia ตั้ง no-store ให้)
+  const sent = await sendMedia(req, res, found.clip, { 'X-Robots-Tag': 'noindex, nofollow' });
+  if (!sent) res.sendStatus(404);
 });
 
 // ── หน้าเว็บ ──────────────────────────────────────────────────

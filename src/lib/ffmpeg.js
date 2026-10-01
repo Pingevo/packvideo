@@ -78,11 +78,11 @@ export async function ffmpeg(args, { timeout = 120_000 } = {}) {
   });
 }
 
-export async function ffprobeDuration(file) {
+export async function ffprobeDuration(file, inputArgs = []) {
   try {
     const { stdout } = await run(
       config.ffmpeg.probe,
-      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
+      ['-v', 'error', ...inputArgs, '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
       { timeout: 20_000 },
     );
     const n = Number.parseFloat(stdout.trim());

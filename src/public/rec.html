@@ -43,6 +43,9 @@
           font-size: 13px; margin-bottom: 10px; display: none; }
   .warn.show { display: block; }
   a { color: #58a6ff; }
+  .msg { display: none; padding: 10px 12px; border-radius: 8px; }
+  .msg.ok  { display: block; background: rgba(46,160,67,.15); border: 1px solid rgba(46,160,67,.5); }
+  .msg.bad { display: block; background: rgba(248,81,73,.15); border: 1px solid rgba(248,81,73,.5); }
 </style>
 </head>
 <body>
@@ -70,6 +73,8 @@
 </div>
 
 <button id="stop" disabled>ปิดคลิปเอง (กดค้าง 1 วินาที)</button>
+<button id="camtest">ทดสอบกล้อง 3 วินาที</button>
+<div class="msg" id="camtest-result" style="margin-top:8px;font-size:13px"></div>
 
 <div class="bar">
   <span id="queue">คิว 0</span>
@@ -77,13 +82,18 @@
   <span id="conn">ยังไม่เชื่อมต่อ</span>
 </div>
 
+<script src="/session.js"></script>
+<script src="/camtest.js"></script>
 <script src="/chunk-queue.js"></script>
 <script src="/panel.js"></script>
 <script>
 (function () {
   'use strict';
 
-  var VERSION = '0.1.0';
+  // เปลี่ยนทุกครั้งที่แก้ตรรกะการอัด — เซิร์ฟเวอร์อ่านค่านี้จากไฟล์แล้วเทียบกับที่ heartbeat
+  // ส่งมา หน้าต่างอัดที่เปิดค้างมาตั้งแต่ก่อน deploy จะถูกบอกให้รีเฟรช (หน้านี้เปิดทั้งกะ
+  // ไม่รีเฟรชเอง โค้ดใหม่จึงไม่มีผลจนกว่าจะมีคนกด)
+  var VERSION = '0.2.1';
   var K = {
     station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id',
     device: 'packvideo.device_name',
@@ -99,7 +109,7 @@
 
   var S = {
     clipId: null, ordersn: null, tracking: null,
-    recorder: null, stream: null, seq: 0, startedAt: 0,
+    stream: null, startedAt: 0,
     queueDepth: 0, allowed: true, cameraReady: false,
     timeslice: 1000, videoBps: 1000000, pingMs: 20000,
   };
@@ -231,8 +241,28 @@
   }
 
   // ── อัด ─────────────────────────────────────────────────────
+  /**
+   * ตัวอัดหนึ่งตัวผูกกับคลิปเดียวตลอดชีวิตของมัน
+   *
+   * รุ่นก่อน 0.2.0 ใช้ S.clipId / S.seq ตัวกลาง แล้ว ondataavailable อ่านค่า ณ ตอนที่
+   * event เกิด — แต่ชิ้นสุดท้ายหลัง stop() ถูกปล่อยแบบ async ทีหลังเสมอ:
+   *  - ถ้าคลิปใหม่เริ่มก่อน ชิ้นท้ายของคลิปเก่าถูกติดป้ายเป็น "ชิ้นแรกของคลิปใหม่"
+   *    ไฟล์ใหม่ขึ้นต้นด้วย moof ของคลิปอื่นแล้วเปิดไม่ได้ (324 คลิปถึง 17 ก.ย. 2026)
+   *  - ถ้าไม่มีคลิปใหม่ ชิ้นท้ายไปถึงหลังสั่ง finalise แล้วโดน 409 ทิ้ง
+   *    ไฟล์ยาวลงตัวที่จำนวนเท่าของชิ้นพอดี ท้ายคลิปหาย 0–3.4 วินาทีทุกคลิป
+   *  - handler ของ stop หน่วง 600 ms แล้วสั่ง S.recorder.stop() ซึ่งตอนนั้นอาจเป็นตัวอัด
+   *    ของคลิปใหม่ไปแล้ว คลิปใหม่จึงหยุดอัดกลางทาง
+   *
+   * ตอนนี้ทุกอย่างของคลิปอยู่ใน rec ของมันเอง และปิดคลิปหลัง onstop (ซึ่งยิงหลังชิ้นสุดท้ายเสมอ)
+   * บวกรอให้ชิ้นลงคิวและส่งขึ้นครบก่อน
+   */
+  var active = null;      // ตัวอัดของคลิปที่กำลังอัดอยู่
+  var retiring = 0;       // จำนวนคลิปที่กำลังรอส่งชิ้นสุดท้าย — ห้ามรีโหลดหน้าระหว่างนี้
+
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
   function beginClip(clipId) {
-    if (S.recorder) endRecorder();
+    if (active) retire(active);
     if (!S.allowed) { warn('ดิสก์เต็ม — ไม่ได้บันทึกคลิปนี้'); return; }
     if (!isCameraLive()) {
       warn('กล้องไม่พร้อมหรือกล้องหลุด — ไม่ได้บันทึกคลิปนี้');
@@ -240,10 +270,9 @@
       return;
     }
 
-    S.clipId = clipId; S.seq = 0; S.startedAt = Date.now();
-    var mime = pickMime();
+    var recorder;
     try {
-      S.recorder = new MediaRecorder(S.stream, { mimeType: mime, videoBitsPerSecond: S.videoBps });
+      recorder = new MediaRecorder(S.stream, { mimeType: pickMime(), videoBitsPerSecond: S.videoBps });
     } catch (e) {
       warn('เริ่มอัดไม่ได้: ' + e.message);
       S.cameraReady = false;
@@ -251,29 +280,76 @@
       return;
     }
 
-    S.recorder.onerror = function (e) {
+    var rec = { clipId: clipId, recorder: recorder, seq: 0, pushes: Promise.resolve(), stopping: null, finalising: null };
+    rec.stopped = new Promise(function (resolve) { recorder.onstop = resolve; });
+
+    recorder.onerror = function (e) {
       warn('MediaRecorder ขัดข้อง: ' + (e.error ? e.error.message : 'error'));
       S.cameraReady = false;
       sendHeartbeat();
     };
 
-    S.recorder.ondataavailable = function (e) {
-      if (!e.data || !e.data.size || !S.clipId) return;
-      queue.push(S.clipId, S.seq++, e.data).catch(function (err) {
+    recorder.ondataavailable = function (e) {
+      if (!e.data || !e.data.size) return;
+      var seq = rec.seq++;
+      // ต่อคิวทีละชิ้นตามลำดับ — IndexedDB ไม่รับประกันว่า put ที่เรียกก่อนจะเสร็จก่อน
+      rec.pushes = rec.pushes.then(function () {
+        return queue.push(rec.clipId, seq, e.data);
+      }).catch(function (err) {
         warn('เก็บชิ้นวิดีโอลงเครื่องไม่ได้: ' + err.message);
       });
     };
-    S.recorder.start(S.timeslice);
+
+    recorder.start(S.timeslice);
+    active = rec;
+    S.clipId = clipId; S.startedAt = Date.now();
     setRec(true);
   }
 
-  function endRecorder() {
-    try { if (S.recorder && S.recorder.state !== 'inactive') S.recorder.stop(); } catch (e) {}
-    S.recorder = null;
+  /** หยุดตัวอัด แล้วรอจนชิ้นสุดท้ายลงคิวและส่งขึ้นเซิร์ฟเวอร์ครบ */
+  function drain(rec) {
+    if (rec.stopping) return rec.stopping;
+    try { if (rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (e) {}
+    // onstop ยิงหลัง dataavailable ตัวสุดท้ายตามสเปก — เพดาน 3 วินาทีกันเบราว์เซอร์ที่ไม่ยิง
+    rec.stopping = Promise.race([rec.stopped, wait(3000)])
+      .then(function () { return rec.pushes; })
+      .then(function () { return queue.flush(rec.clipId, 30000); });
+    return rec.stopping;
   }
 
-  function finishClip() {
-    endRecorder();
+  /**
+   * ปิดคลิปให้จบ — ครั้งเดียวต่อคลิป เรียกซ้ำได้
+   *
+   * status ว่าง = ให้เซิร์ฟเวอร์ใช้สถานะที่ตัดสินไว้แล้วตอนสั่งหยุด (เช่น verified จากการ
+   * สแกนใบปะหน้า) — ถ้าส่ง unverified ทับตอนคลิปใหม่มาแทรก จะทำให้คลิปที่ยิงตรงแล้วกลายเป็นไม่ตรง
+   */
+  function retire(rec, status) {
+    if (active === rec) clearActive();
+    if (rec.finalising) return rec.finalising;
+    retiring++;
+    rec.finalising = drain(rec).then(function () {
+      return fetch('/api/clip/' + encodeURIComponent(rec.clipId) + '/finalise', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(status ? { status: status } : {}),
+      });
+    }).catch(function (err) {
+      try { console.warn('[packvideo] finalise error:', err); } catch (e) {}
+    }).then(function () { retiring--; });
+    return rec.finalising;
+  }
+
+  /** คลิปถูกทิ้ง — หยุดอัดแล้วลบชิ้นที่ค้างในเครื่อง ไม่ต้องเสียแบนด์วิดท์ส่ง */
+  function discard(rec) {
+    if (active === rec) clearActive();
+    try { if (rec.recorder.state !== 'inactive') rec.recorder.stop(); } catch (e) {}
+    Promise.race([rec.stopped, wait(3000)])
+      .then(function () { return rec.pushes; })
+      .then(function () { return queue.dropClip(rec.clipId); })
+      .catch(function () {});
+  }
+
+  function clearActive() {
+    active = null;
     S.clipId = null; S.ordersn = null; S.tracking = null;
     setRec(false);
     setText('ordersn', '—'); setText('tracking', '—'); setText('elapsed', '—');
@@ -311,18 +387,7 @@
       btn.classList.add('arming');
       timer = setTimeout(function () {
         btn.classList.remove('arming');
-        var id = S.clipId;
-        if (!id) return;
-        setRec(false);
-        endRecorder();
-        queue.flush(id).then(function () {
-          return fetch('/api/clip/' + encodeURIComponent(id) + '/finalise', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'manual_stop' }),
-          });
-        }).catch(function () {}).then(function () {
-          if (S.clipId === id) finishClip();
-        });
+        if (active) retire(active, 'manual_stop');
       }, 1000);
     }
     function up() { clearTimeout(timer); btn.classList.remove('arming'); }
@@ -388,6 +453,8 @@
       S.allowed = d.recording !== false;
       if (d.timeslice_ms) S.timeslice = d.timeslice_ms;
       if (d.video_bps) S.videoBps = d.video_bps;
+      // เซิร์ฟเวอร์มีหน้าต่างอัดรุ่นใหม่กว่า — รีโหลดตัวเองตอนว่าง (ไม่มีคลิปและคิวว่าง)
+      if (d.rec_version && d.rec_version !== VERSION) reloadWhenIdle();
       setText('disk', 'ดิสก์ ' + (d.disk_used_pct != null ? d.disk_used_pct + '%' : '—'));
       if (!S.allowed) warn('ดิสก์เต็ม — หยุดบันทึกชั่วคราว งานแพ็คทำต่อได้ตามปกติ');
       else clearWarn();
@@ -401,10 +468,9 @@
     });
 
     es.addEventListener('abort', function (e) {
-      var id = S.clipId;
-      finishClip();
-      // ชิ้นที่ส่งไม่ทันของคลิปที่ถูกทิ้ง ไม่ต้องเสียแบนด์วิดท์ส่งต่อ
-      if (id) queue.dropClip(id).catch(function () {});
+      var d = {};
+      try { d = JSON.parse(e.data); } catch (err) {}
+      if (active && (!d.clip_id || active.clipId === d.clip_id)) discard(active);
     });
 
     es.addEventListener('tag', function (e) {
@@ -415,30 +481,13 @@
     es.addEventListener('stop', function (e) {
       var d = {};
       try { d = JSON.parse(e.data); } catch (err) {}
-      var id = S.clipId;
-      if (!id) return;
-      setRec(false);
-
-      // ให้เวลา MediaRecorder เก็บภาพหลังสแกนอีกเล็กน้อย (~600ms) เพื่อให้เห็นกล่องตอนจบชัดเจน
-      setTimeout(function () {
-        if (S.recorder && S.recorder.state !== 'inactive') {
-          try { S.recorder.stop(); } catch (err) {}
-        }
-        S.recorder = null;
-
-        // รอให้ ChunkQueue ส่งชิ้นสุดท้าย (และชิ้นค้างทั้งหมด) ขึ้นเซิร์ฟเวอร์จนครบ
-        queue.flush(id).then(function () {
-          return fetch('/api/clip/' + encodeURIComponent(id) + '/finalise', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: d.status || 'verified' }),
-          });
-        }).catch(function (err) {
-          console.warn('[packvideo] finalise error:', err);
-        }).then(function () {
-          if (S.clipId === id) finishClip();
-        });
-      }, 600);
+      // ยึด clip_id จากสัญญาณ ไม่ใช่คลิปปัจจุบัน — สัญญาณหยุดของคลิปเก่าอาจมาถึงตอนคลิปใหม่เริ่มแล้ว
+      var rec = active && (!d.clip_id || active.clipId === d.clip_id) ? active : null;
+      if (!rec) return;       // คลิปนี้ถูกปิดไปแล้วตอนคลิปใหม่มาแทรก
+      clearActive();
+      // อัดต่ออีก 600 ms ให้เห็นกล่องหลังยิงบาร์โค้ดชัดๆ แล้วค่อยปิด
+      // ถ้าคลิปใหม่เริ่มระหว่างรอ beginClip ไม่เห็น rec นี้แล้ว (active ถูกล้าง) จึงไม่ไปหยุดตัวใหม่
+      setTimeout(function () { retire(rec, d.status); }, 600);
     });
 
     es.addEventListener('mismatch', function (e) {
@@ -448,6 +497,35 @@
       $('banner').classList.add('show');
       beep();
     });
+  }
+
+  // หน้าต่างอัดห้ามเด้งไปหน้าล็อกอินกลางคลิป — session หมดขณะอัดแค่ขึ้นแถบเตือน
+  // (ชิ้นวิดีโอที่ส่งไม่ผ่านรออยู่ในคิวเครื่อง ล็อกอินใหม่แล้วส่งต่อเอง)
+  if (window.PackvideoSession) {
+    PackvideoSession.setBusy(function () { return !!active || retiring > 0 || S.queueDepth > 0; });
+    PackvideoSession.me();
+  }
+
+  // ── ทดสอบกล้อง (R5.3) ───────────────────────────────────────
+  // ทำได้เฉพาะตอนว่าง — อัดทดสอบซ้อนกับคลิปจริงจะแย่ง CPU และทำให้คลิปจริงกระตุก
+  $('camtest').onclick = function () {
+    var b = this;
+    if (active) { warn('กำลังอัดคลิปจริงอยู่ — ทดสอบหลังแพ็คกล่องนี้เสร็จ'); return; }
+    b.disabled = true; b.textContent = 'กำลังอัดทดสอบ 3 วินาที…';
+    PackvideoCamTest.run(isCameraLive() ? S.stream : null, { seconds: 3, station: station })
+      .then(function (r) { PackvideoCamTest.render($('camtest-result'), r); })
+      .catch(function (e) { PackvideoCamTest.render($('camtest-result'), { ok: false, problems: [e.message] }); })
+      .then(function () { b.disabled = false; b.textContent = 'ทดสอบกล้องอีกครั้ง'; });
+  };
+
+  var reloadTimer = null;
+  function reloadWhenIdle() {
+    if (reloadTimer) return;
+    warn('มีหน้าต่างอัดรุ่นใหม่ — จะรีเฟรชเองตอนว่าง');
+    reloadTimer = setInterval(function () {
+      if (active || retiring > 0 || S.queueDepth > 0) return;
+      location.reload();
+    }, 2000);
   }
 
   // เตือนด้วยเสียงด้วย เพราะพนักงานกำลังก้มมองกล่อง ไม่ได้มองจอ
