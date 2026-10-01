@@ -511,7 +511,9 @@
       '#' + CONFIRM_ID + ' .pv-btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}' +
       '#' + CONFIRM_ID + ' button{font:inherit;font-weight:700;padding:9px 12px;border-radius:8px;cursor:pointer;' +
       'border:1px solid #d0d7de;background:#f6f8fa;color:#1f2328}' +
-      '#' + CONFIRM_ID + ' button.pv-yes{background:#1a7f37;border-color:#1a7f37;color:#fff;flex:1}';
+      '#' + CONFIRM_ID + ' button.pv-yes{background:#1a7f37;border-color:#1a7f37;color:#fff;flex:1}' +
+      // ทุกอย่างที่ hook วาดเป็นของบนจอเท่านั้น — ห้ามติดไปกับใบปะหน้าที่พิมพ์ออกไป
+      '@media print{#' + BAR_ID + ',#' + PILL_ID + ',#' + CONFIRM_ID + '{display:none!important}}';
     (document.head || document.documentElement).appendChild(s);
   }
 
@@ -714,7 +716,11 @@
   function needsConfirm() {
     try {
       var c = JSON.parse(localStorage.getItem(CONFIRM_KEY) || 'null');
-      return !(c && c.day === todayBkk() && c.station === station && c.user === (userName() || ''));
+      if (!(c && c.day === todayBkk() && c.station === station)) return true;
+      // หน้าที่ไม่มี #lblUser (ใบปะหน้า) ไม่รู้ว่าใครใช้อยู่ — ยืนยันโต๊ะนี้วันนี้แล้วถือว่าผ่าน
+      // เดิมเทียบกับ '' จึงขึ้น "ยังไม่ได้ยืนยัน" บนใบปะหน้าทุกใบ ทั้งที่เพิ่งกดยืนยันจากหน้าสแกน
+      var user = userName();
+      return user !== null && c.user !== user;
     } catch (e) { return true; }
   }
 
@@ -744,7 +750,9 @@
   function renderConfirm(st) {
     if (!UI_ENABLED || !station) return;
     var card = document.getElementById(CONFIRM_ID);
-    if (!needsConfirm()) { if (card) card.remove(); return; }
+    // ใบปะหน้าสั่งพิมพ์เองแล้วเด้งกลับใน 3 วินาที — ไม่มีใครทันกด และกล่องไปทับใบปะหน้าในงานพิมพ์
+    // ให้ถามที่หน้าสแกนอย่างเดียว ซึ่งมีชื่อผู้ใช้ให้ผูกด้วย
+    if (isLabelPage() || !needsConfirm()) { if (card) card.remove(); return; }
     if (!card) {
       card = document.createElement('div');
       card.id = CONFIRM_ID;
