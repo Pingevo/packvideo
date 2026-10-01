@@ -563,6 +563,140 @@ export function toMetadata(clip) {
   };
 }
 
+// ── คลิปค้างจากรอบก่อน (ตอนบูต) ─────────────────────────────────
+const RESTART_NOTE = 'เซิร์ฟเวอร์รีสตาร์ทระหว่างอัด';
+const RECOVERABLE = ['verified', 'registered', 'manual_stop', 'unverified', 'timeout'];   // ไม่รวม aborted (ตั้งใจทิ้ง)
+
+/**
+ * ปิดคลิปที่ process ก่อนหน้าทิ้งค้างไว้ แล้วต่อชิ้นที่รับไว้แล้วใน _tmp เป็นไฟล์
+ *
+ * เดิม repo.reconcileOrphans แค่เปลี่ยนสถานะเป็น unverified — รีสตาร์ท 2026-10-01 10:47 คลิปที่กำลังอัด
+ * 4 คลิปจึงไม่มีไฟล์เลยทั้งที่ชิ้นอยู่ใน _tmp ครบ (ต้องต่อมือ) และใส่แค่ pin_reasons ไม่ได้ตั้ง pinned
+ * ซึ่ง retention ดูอย่างเดียว คลิปผิดปกติพวกนี้จึงจะถูกลบตามรอบปกติ
+ *
+ * ส่วนหลังรีสตาร์ทกู้ไม่ได้ — process ใหม่ไม่รู้จักคลิปนี้ ชิ้นที่ส่งมาต่อจึงถูกตอบ final ให้ทิ้ง
+ * ended_at จึงใช้เวลาที่ชิ้นสุดท้ายมาถึงจริง ไม่ใช่เวลาบูต
+ *
+ * รันซ้ำได้: คลิปที่ปิดไปแล้วจะถูกแตะเฉพาะเมื่อยังไม่มีไฟล์และชิ้นยังอยู่ใน _tmp (เช่นรอบก่อนต่อไม่สำเร็จ
+ * หรือค้างมาจากโค้ดเดิม) — คลิปที่ไม่มีชิ้นเหลือจะไม่ถูกเขียนซ้ำทุกครั้งที่บูต
+ */
+export async function recoverOrphans() {
+  let leftover = [];
+  try {
+    leftover = (await fs.readdir(TMP())).filter((id) => !clips.has(id));
+  } catch { /* ยังไม่มี _tmp */ }
+
+  const docs = await repo.findOrphanClips(leftover, RECOVERABLE);
+  if (!docs?.length) return { found: 0, recovered: 0 };
+
+  let recovered = 0;
+  for (const doc of docs) {
+    try {
+      if (await recoverOrphan(doc)) recovered++;
+    } catch (err) {
+      log.error({ clip_id: doc._id, err: err.message }, 'กู้คลิปค้างจากรอบก่อนไม่สำเร็จ');
+    }
+  }
+  log.warn({ found: docs.length, recovered }, 'พบคลิปค้างจากรอบก่อน — ต่อไฟล์จากชิ้นที่รับไว้แล้ว');
+  return { found: docs.length, recovered };
+}
+
+async function recoverOrphan(doc) {
+  if (clips.has(doc._id)) return false;   // คลิปของ process นี้ ไม่ใช่ของค้าง
+
+  const open = !CLOSED.includes(doc.status);
+  const dir = path.join(TMP(), doc._id);
+  let names = [];
+  try { names = (await fs.readdir(dir)).sort(); } catch { /* ไม่มีชิ้นเลย */ }
+  if (!open && !names.length) {
+    await removeTmp(doc._id);   // โฟลเดอร์ว่างที่ค้างไว้
+    return false;
+  }
+
+  const started = new Date(doc.started_at);
+  const { dir: rel } = dayFolder(started);
+
+  // ไฟล์ถูกต่อครบแล้วแต่ฐานยังไม่ได้บันทึก (เครื่องปิดระหว่างนั้น) — finalise ลบ _tmp หลังเขียนไฟล์กับ .json คู่
+  // ครบแล้วเท่านั้น ไม่มีชิ้นแต่มี .json คู่ = คลิปปิดสมบูรณ์ ใช้ค่าในไฟล์นั้น (D4) ไม่ใช่ตีเป็นคลิปไม่มีวิดีโอ
+  if (!names.length) {
+    const side = await fs.readFile(path.join(ROOT(), rel, `${doc._id}.json`), 'utf8').then(JSON.parse, () => null);
+    if (side?.clip_id === doc._id && side.media_path) {
+      await repo.saveClip(side);
+      await repo.appendEvent({
+        clip_id: doc._id, event: 'repair', station_id: side.station_id, ordersn: side.ordersn ?? null,
+        tracking_no: side.tracking_no ?? null, actor: side.packer ?? null,
+        detail: { status: side.status, note: 'ไฟล์ปิดครบแล้วแต่ฐานยังไม่ได้บันทึก — ใช้ค่าจาก .json คู่' },
+      });
+      return true;
+    }
+  }
+
+  let lastAt = null;
+  for (const n of names) {
+    const st = await fs.stat(path.join(dir, n)).catch(() => null);
+    if (st && (!lastAt || st.mtime > lastAt)) lastAt = st.mtime;
+  }
+
+  const clip = {
+    _id: doc._id,
+    station_id: doc.station_id,
+    packer: doc.packer ?? null,
+    status: doc.status,
+    ordersn: doc.ordersn ?? null,
+    tracking_no: doc.tracking_no ?? null,
+    project_id: doc.project_id ?? null,
+    imeis: doc.imeis ?? [],
+    flags: [...(doc.flags ?? [])],
+    pinned: !!doc.pinned,
+    pin_reasons: [...(doc.pin_reasons ?? [])],
+    started_at: started,
+    ended_at: doc.ended_at ? new Date(doc.ended_at) : null,
+    day: doc.day,
+    duration_ms: doc.duration_ms ?? null,
+    bytes: doc.bytes ?? 0,
+    chunks: names.length,
+    checksum: doc.checksum ?? null,
+    media_path: null,
+  };
+
+  // ค้างจากรอบนี้ หรือคลิปรีสตาร์ทที่โค้ดเดิมปิดไว้โดยไม่ต่อไฟล์ (มี note ที่ reconcileOrphans ตั้ง)
+  const restartCut = open || doc.note === RESTART_NOTE;
+  if (open) clip.status = 'unverified';
+  if (restartCut && !clip.flags.includes('server_restart')) clip.flags.push('server_restart');
+  if (!clip.ended_at) {
+    clip.ended_at = lastAt ?? started;
+    clip.duration_ms = clip.ended_at - started;
+  }
+  // กติกาเดียวกับ finaliseClip (FR-6.3)
+  if (clip.status === 'unverified' || clip.status === 'timeout') {
+    clip.pinned = true;
+    if (!clip.pin_reasons.includes('anomaly')) clip.pin_reasons.push('anomaly');
+  }
+
+  // ติดป้ายก่อนต่อ เพื่อให้ .json คู่ที่ finalise เขียนมีป้ายนี้ด้วย · มีชิ้นแล้วจึงไม่ใช่คลิป empty
+  if (names.length) {
+    clip.flags = clip.flags.filter((f) => f !== 'empty');
+    if (!clip.flags.includes('recovered')) clip.flags.push('recovered');
+  }
+  try {
+    await finalise(clip);
+  } catch (err) {
+    log.error({ clip_id: clip._id, err: err.message }, 'ต่อไฟล์คลิปค้างไม่สำเร็จ — ชิ้นยังอยู่ใน _tmp จะลองใหม่ตอนบูตครั้งหน้า');
+    clip.flags = clip.flags.filter((f) => f !== 'recovered');
+    if (!clip.flags.includes('finalise_failed')) clip.flags.push('finalise_failed');
+    clip.media_path = null;
+  }
+
+  persist(clip, open ? 'close' : 'repair', {
+    status: clip.status,
+    note: open ? RESTART_NOTE : 'ต่อไฟล์จากชิ้นที่ค้างใน _tmp ตอนบูต',
+    chunks: names.length,
+    bytes: clip.bytes,
+  });
+  await writeChain.get(clip._id);
+  return !!clip.media_path;
+}
+
 // ── งานกวาดคลิปค้าง ───────────────────────────────────────────
 let sweeper = null;
 

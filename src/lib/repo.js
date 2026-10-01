@@ -47,30 +47,34 @@ export function findClip(clipId) {
 }
 
 /**
- * คลิปที่ค้างสถานะ "กำลังอัด" จากรอบก่อน — เกิดเมื่อ process ถูกปิดกลางคัน
+ * คลิปที่ค้างจากรอบก่อน — เกิดเมื่อ process ถูกปิดกลางคัน · clips.recoverOrphans() ต่อไฟล์และปิดให้
  *
  * ถ้าไม่จัดการ มันจะค้างเป็น recording ตลอดไปแล้วทำให้ตัวเลข % verified ผิด
  * และทำให้คนอ่านหน้า monitor เข้าใจผิดว่ายังมีอะไรกำลังทำงานอยู่
+ *
+ * สองกลุ่ม:
+ *   1. ยังเปิดค้างอยู่ — เฉพาะที่เริ่มก่อน process นี้เกิด เพราะ Mongo ต่อติดช้ากว่าเซิร์ฟเวอร์รับสัญญาณ
+ *      ได้หลายวินาที ถ้าไม่จำกัด คลิปแรกๆ หลังรีสตาร์ทที่กำลังอัดจริงจะถูกปิดไปด้วย (เจอตอนทดสอบ)
+ *   2. ปิดไปแล้วแต่ไม่มีไฟล์ ทั้งที่ชิ้นยังค้างใน _tmp (leftoverIds) — โค้ดก่อน 2026-10-01 ปิดคลิปรีสตาร์ท
+ *      โดยไม่ต่อชิ้นเลย หรือรอบก่อนต่อไม่สำเร็จ · ตัวที่ retention ประกาศลบไฟล์ไปแล้ว (media_deleted_at)
+ *      ไม่เอามา — ถ้าไปสร้างไฟล์ขึ้นใหม่ retention จะไม่ย้ายมันแล้วข้ามการลบทั้งวันทุกรอบ
  */
 const BOOTED_AT = new Date().toISOString();
 
-export function reconcileOrphans() {
-  return guard('reconcileOrphans', async (conn) => {
-    const res = await conn.collection(COL.clips).updateMany(
-      // เฉพาะคลิปที่เริ่มก่อน process นี้เกิด — Mongo ต่อติดช้ากว่าเซิร์ฟเวอร์รับสัญญาณได้หลายวินาที
-      // ถ้าไม่จำกัด คลิปแรกๆ หลังรีสตาร์ทที่กำลังอัดจริงจะถูกเขียนทับเป็น unverified (เจอตอนทดสอบ)
-      { status: { $in: ['pending', 'recording', 'closing'] }, started_at: { $lt: BOOTED_AT } },
-      {
-        $set: { status: 'unverified', note: 'เซิร์ฟเวอร์รีสตาร์ทระหว่างอัด', updated_at: new Date() },
-        // pin ไว้เพราะเป็นสัญญาณผิดปกติ (FR-6.3) — คลิปที่ขาดตอนคือคลิปที่ต้องมีคนดู
-        $addToSet: { pin_reasons: 'anomaly' },
-      },
-    );
-    if (res.modifiedCount) {
-      log.warn({ count: res.modifiedCount }, 'พบคลิปค้างจากรอบก่อน — ปิดเป็น unverified');
-    }
-    return res.modifiedCount;
-  });
+export function findOrphanClips(leftoverIds, closedStatuses) {
+  return guard('findOrphanClips', (conn) =>
+    conn.collection(COL.clips).find({
+      $or: [
+        { status: { $in: ['pending', 'recording', 'closing'] }, started_at: { $lt: BOOTED_AT } },
+        {
+          _id: { $in: leftoverIds },
+          status: { $in: closedStatuses },
+          media_path: null,
+          media_deleted_at: { $exists: false },
+        },
+      ],
+    }).toArray(),
+  );
 }
 
 // ── clip_events ───────────────────────────────────────────────

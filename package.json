@@ -29,6 +29,8 @@
     "e2e:media": "node --env-file-if-exists=.env scripts/e2e-media-cachemiss.mjs",
     "pree2e:presence": "node scripts/check-node.cjs",
     "e2e:presence": "node scripts/e2e-recorder-presence.mjs",
+    "pree2e:restart": "node scripts/check-node.cjs",
+    "e2e:restart": "node scripts/e2e-restart-orphan.mjs",
     "pretest:storage-race": "node scripts/check-node.cjs",
     "test:storage-race": "node scripts/test-storage-race.mjs",
     "pree2e:video": "node scripts/check-node.cjs",

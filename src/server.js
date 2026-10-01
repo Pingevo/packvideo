@@ -4,9 +4,8 @@ import { log } from './log.js';
 import { connect, close as closeDb } from './db.js';
 import { ensureStorage, storageStatus, storagePathWarning } from './lib/storage.js';
 import { startMonitor } from './lib/monitor.js';
-import { startSweeper } from './lib/clips.js';
+import { startSweeper, recoverOrphans } from './lib/clips.js';
 import { ensureIndexes } from './lib/schema.js';
-import { reconcileOrphans } from './lib/repo.js';
 import { probeFfmpeg } from './lib/ffmpeg.js';
 import { startRetention } from './lib/retention.js';
 
@@ -32,7 +31,7 @@ if (pathWarning) log.warn(pathWarning);
 // ไม่ await — ต่อ Mongo ไม่ได้ต้องไม่ทำให้บริการไม่ขึ้น (ดูเหตุผลใน db.js)
 connect(async () => {
   await ensureIndexes();
-  await reconcileOrphans();
+  await recoverOrphans();
 }).catch((err) => log.error({ err: err.message }, 'เริ่มการเชื่อมต่อ mongo ไม่สำเร็จ'));
 
 const server = createApp().listen(config.port, () => {
