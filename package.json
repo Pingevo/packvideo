@@ -33,6 +33,11 @@
     "e2e:restart": "node scripts/e2e-restart-orphan.mjs",
     "pree2e:late": "node scripts/check-node.cjs",
     "e2e:late": "node scripts/e2e-late-chunks.mjs",
+    "pree2e:wait-idle": "node scripts/check-node.cjs",
+    "e2e:wait-idle": "node scripts/e2e-wait-idle.mjs",
+    "pree2e:browser": "node scripts/check-node.cjs",
+    "e2e:browser": "node scripts/e2e-recorder-browser.mjs",
+    "wait-idle": "node scripts/wait-idle.mjs",
     "pretest:storage-race": "node scripts/check-node.cjs",
     "test:storage-race": "node scripts/test-storage-race.mjs",
     "pree2e:video": "node scripts/check-node.cjs",
@@ -48,5 +53,8 @@
     "mongodb": "^6.20.0",
     "pino": "^9.13.1",
     "pino-http": "^10.5.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.43.1"
   }
 }

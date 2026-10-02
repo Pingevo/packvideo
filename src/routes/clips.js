@@ -47,6 +47,10 @@ clipsRouter.get('/stream/:stationId', async (req, res) => {
       open_clip: open ? { clip_id: open._id, ordersn: open.ordersn, tracking_no: open.tracking_no } : null,
     })}\n\n`,
   );
+  // stop ที่ส่งไปตอนหน้าต่างอัดหลุดอยู่ไม่ถึง — ส่งซ้ำ หน้าต่างอัดจะปิดคลิปนั้นพร้อมบอกจำนวนชิ้น
+  for (const stop of clips.pendingStops(req.params.stationId)) {
+    res.write(`event: stop\ndata: ${JSON.stringify(stop)}\n\n`);
+  }
 });
 
 // ── รับชิ้นวิดีโอ ──────────────────────────────────────────────
@@ -81,6 +85,8 @@ clipsRouter.post('/clip/:clipId/finalise', json, async (req, res) => {
   const n = req.body?.chunks;
   const expected = Number.isInteger(n) && n >= 0 && n <= 100_000 ? n : undefined;
   const clip = await clips.finaliseClip(req.params.clipId, status, req.body?.note, expected);
+  // เพิ่งบูตและยังรับคลิปค้างกลับมาไม่เสร็จ — ให้หน้าต่างอัดสั่งซ้ำ ไม่ใช่เข้าใจว่าคลิปหายไปแล้ว
+  if (!clip && clips.recoveryPending()) return res.status(503).json({ ok: false, error: 'เซิร์ฟเวอร์กำลังเริ่มระบบ' });
   if (!clip) return res.status(404).json({ ok: false, error: 'ไม่พบคลิปนี้' });
   res.json({ ok: true, clip: clips.toMetadata(clip) });
 });
@@ -96,7 +102,14 @@ clipsRouter.post('/clip/:clipId/close', json, async (req, res) => {
 
 /** POST /api/station/:stationId/detach — หน้าต่างอัดกำลังจะปิด ปิดคลิปค้างให้ด้วย */
 clipsRouter.post('/station/:stationId/detach', json, async (req, res) => {
-  await clips.closeStation(req.params.stationId, req.body?.reason ?? 'หน้าต่างอัดถูกปิด');
+  // หน้าต่างอัด 0.2.3 ขึ้นไปบอกคลิปที่ยังไม่ได้สั่งปิด (กำลังอัด + หยุดแล้วแต่ยังไม่ยืนยัน) พร้อมจำนวนชิ้นที่ลงเครื่องแล้ว
+  // เซิร์ฟเวอร์รอชิ้นที่ค้างให้หน้าต่างอัดที่เปิดใหม่ส่งต่อ แทนการปิดทันที
+  const raw = Array.isArray(req.body?.clips) ? req.body.clips.slice(0, 20)
+    : req.body?.clip_id ? [{ clip_id: req.body.clip_id, chunks: req.body.chunks }] : [];
+  const pending = raw
+    .filter((x) => typeof x?.clip_id === 'string' && Number.isInteger(x.chunks) && x.chunks >= 0 && x.chunks <= 100_000)
+    .map((x) => ({ clipId: x.clip_id, chunks: x.chunks }));
+  await clips.closeStation(req.params.stationId, req.body?.reason ?? 'หน้าต่างอัดถูกปิด', pending);
   res.json({ ok: true });
 });
 

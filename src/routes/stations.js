@@ -6,6 +6,7 @@ import { listeningWithin, noListenerFor } from '../lib/sse.js';
 import { signalCors } from './signal.js';
 import { videoStatus } from '../lib/videohealth.js';
 import { recVersion } from '../lib/recversion.js';
+import { stationLoad } from '../lib/clips.js';
 
 export const stationsRouter = Router();
 
@@ -22,7 +23,8 @@ const DESK_GRACE_MS = 5000;
  * เพราะเป็น route ที่เปลี่ยนสถานะจริง
  */
 stationsRouter.get('/stations', signalCors, (_req, res) => {
-  res.json({ ok: true, stations: listStations() });
+  // open_clip/closing มาจากฝั่งเซิร์ฟเวอร์ (ไม่ใช่ heartbeat ที่ช้าได้ 30 วิ) — ด่านก่อน deploy ใช้ดูว่ารีสตาร์ทได้หรือยัง
+  res.json({ ok: true, stations: listStations().map((s) => ({ ...s, ...stationLoad(s.station_id) })) });
 });
 
 /**

@@ -41,9 +41,30 @@
     });
   }
 
-  function keyOf(clipId, seq) {
-    return clipId + '#' + String(seq).padStart(6, '0');
+  /**
+   * key กำหนดลำดับการส่ง (next() หยิบ key น้อยสุด) — ต้องเรียงตามเวลาที่คลิปเริ่ม แล้วตามลำดับชิ้น
+   *
+   * เดิมเป็น clipId#seq ซึ่งเรียงตามรหัสคลิปที่เป็นตัวสุ่ม พอเน็ตช้าจนคิวสะสม คลิปใหม่ที่รหัสน้อยกว่า
+   * แซงคลิปเก่าที่ยังส่งไม่ครบ คลิปเก่ารอจนเซิร์ฟเวอร์หมดเวลาแล้วโดน 409 (2026-10-01 13:26–14:11 · 9 คลิป)
+   * ขึ้นต้นด้วย 't' ให้ key รุ่นเก่าที่ยังค้างในเครื่อง ('c_…') เรียงก่อนและถูกส่งก่อน ซึ่งถูกเพราะเก่ากว่า
+   */
+  function keyOf(order, clipId, seq) {
+    // ชิ้นแรกคือหัวไฟล์ ~760 ไบต์ ไม่มีภาพ แต่เป็นหลักฐานว่าหน้าต่างอัดเริ่มอัดคลิปนี้แล้ว — ให้ลัดคิวไปก่อน
+    // ถ้ารอต่อท้ายคิวที่ค้าง เซิร์ฟเวอร์ไม่เห็นอะไรเกิน 8 วินาทีแล้วเตือน "ไม่ได้บันทึก" ทั้งที่อัดอยู่
+    // แถบแดงบอกให้กดเปิดหน้าต่างอัดใหม่ ซึ่งปิดคลิปที่กำลังอัดแล้วทำให้วิดีโอหายจริง · ส่งแทบไม่เสียเวลา
+    var lane = seq === 0 ? 'a' : 't';
+    return lane + String(order).padStart(15, '0') + '|' + clipId + '#' + String(seq).padStart(6, '0');
   }
+
+  /**
+   * สองช่องทางที่ส่งพร้อมกันได้ — หัวไฟล์ (ชิ้นที่ 0 · key 'a…') กับชิ้นภาพ (key 't…' และ 'c_…' รุ่นเก่า)
+   * ช่องเดียวส่งทีละชิ้น ตอนเน็ตช้าชิ้นภาพที่กำลังส่งค้างได้ 10 วินาทีขึ้นไป ลัดคิวอย่างเดียวไม่พอ
+   * หัวไฟล์ของคลิปใหม่ยังต้องรอชิ้นนั้นส่งจบ (ทดสอบแล้วยังเตือนผิด) จึงต้องมีช่องของตัวเอง
+   */
+  var LANES = {
+    header: function () { return IDBKeyRange.bound('a', 'a\uffff'); },
+    media: function () { return IDBKeyRange.lowerBound('b'); },
+  };
 
   function ChunkQueue(opts) {
     opts = opts || {};
@@ -51,10 +72,12 @@
     this.onchange = opts.onchange || function () {};
     this.onlog = opts.onlog || function () {};
     this.db = null;
-    this.sending = false;
-    this.backoff = 0;
-    this.timer = null;
+    this.lanes = {
+      header: { sending: false, backoff: 0, timer: null },
+      media: { sending: false, backoff: 0, timer: null },
+    };
     this.stopped = false;
+    this.order = {};      // clipId → เวลาที่ได้ชิ้นแรกของคลิปนั้น (คลิปของโต๊ะหนึ่งเริ่มทีละคลิป จึงเท่ากับลำดับเริ่มอัด)
   }
 
   ChunkQueue.prototype.init = function () {
@@ -74,8 +97,9 @@
   ChunkQueue.prototype.push = function (clipId, seq, blob) {
     var self = this;
     if (!this.db) return Promise.reject(new Error('คิวยังไม่พร้อม'));
+    var order = this.order[clipId] || (this.order[clipId] = Date.now());
     return tx(this.db, 'readwrite', function (store) {
-      store.put({ id: keyOf(clipId, seq), clip_id: clipId, seq: seq, blob: blob, at: Date.now() });
+      store.put({ id: keyOf(order, clipId, seq), clip_id: clipId, seq: seq, blob: blob, at: Date.now() });
     }).then(function () {
       self.notify();
       self.pump();
@@ -115,7 +139,7 @@
     return new Promise(function (resolve) {
       function check() {
         self.countClip(clipId).then(function (n) {
-          if (n === 0 && !self.sending) {
+          if (n === 0 && !self.busy()) {
             resolve();
           } else if (Date.now() - t0 > timeoutMs) {
             resolve();
@@ -129,12 +153,16 @@
     });
   };
 
-  /** ชิ้นที่ต้องส่งถัดไป — เรียงตาม key จึงได้ตามลำดับที่อัดมา */
-  ChunkQueue.prototype.next = function () {
+  ChunkQueue.prototype.busy = function () {
+    return this.lanes.header.sending || this.lanes.media.sending;
+  };
+
+  /** ชิ้นที่ต้องส่งถัดไปของช่องทางนั้น — เรียงตาม key จึงได้ตามลำดับที่อัดมา */
+  ChunkQueue.prototype.next = function (lane) {
     if (!this.db) return Promise.resolve(null);
     return new Promise(function (resolve, reject) {
       var t = this.db.transaction(STORE, 'readonly');
-      var req = t.objectStore(STORE).openCursor();
+      var req = t.objectStore(STORE).openCursor(LANES[lane]());
       req.onsuccess = function () { resolve(req.result ? req.result.value : null); };
       req.onerror = function () { reject(req.error); };
     }.bind(this));
@@ -170,12 +198,18 @@
   };
 
   ChunkQueue.prototype.pump = function () {
-    var self = this;
-    if (this.sending || this.stopped || !this.db) return;
-    this.sending = true;
+    this.pumpLane('header');
+    this.pumpLane('media');
+  };
 
-    this.next().then(function (item) {
-      if (!item) { self.sending = false; return; }
+  ChunkQueue.prototype.pumpLane = function (name) {
+    var self = this;
+    var lane = this.lanes[name];
+    if (lane.sending || this.stopped || !this.db) return;
+    lane.sending = true;
+
+    this.next(name).then(function (item) {
+      if (!item) { lane.sending = false; return; }
 
       return fetch(self.endpoint + '/' + encodeURIComponent(item.clip_id) + '/chunk/' + item.seq, {
         method: 'PUT',
@@ -191,29 +225,31 @@
         // 5xx หรืออื่นๆ = ปัญหาชั่วคราว เก็บไว้ส่งใหม่
         throw new Error('HTTP ' + res.status);
       }).then(function (outcome) {
-        self.sending = false;
-        self.backoff = 0;
+        lane.sending = false;
+        lane.backoff = 0;
         self.notify();
-        if (outcome) self.pump();   // ส่งชิ้นถัดไปทันที
+        if (outcome) self.pumpLane(name);   // ส่งชิ้นถัดไปทันที
       });
     }).catch(function (err) {
-      self.sending = false;
+      lane.sending = false;
       // ถอยเป็นขั้น กัน retry ถี่จนกินแบตและกวน log ตอนเน็ตขาดยาว
-      self.backoff = Math.min(self.backoff ? self.backoff * 2 : 2000, MAX_BACKOFF_MS);
-      self.onlog('ส่งไม่สำเร็จ (' + err.message + ') — ลองใหม่ใน ' + (self.backoff / 1000) + ' วินาที');
-      clearTimeout(self.timer);
-      self.timer = setTimeout(function () { self.pump(); }, self.backoff);
+      lane.backoff = Math.min(lane.backoff ? lane.backoff * 2 : 2000, MAX_BACKOFF_MS);
+      self.onlog('ส่งไม่สำเร็จ (' + err.message + ') — ลองใหม่ใน ' + (lane.backoff / 1000) + ' วินาที');
+      clearTimeout(lane.timer);
+      lane.timer = setTimeout(function () { self.pumpLane(name); }, lane.backoff);
     });
   };
 
   ChunkQueue.prototype.stop = function () {
     this.stopped = true;
-    clearTimeout(this.timer);
+    clearTimeout(this.lanes.header.timer);
+    clearTimeout(this.lanes.media.timer);
   };
 
   ChunkQueue.prototype.resume = function () {
     this.stopped = false;
-    this.backoff = 0;
+    this.lanes.header.backoff = 0;
+    this.lanes.media.backoff = 0;
     this.pump();
   };
 

@@ -182,6 +182,59 @@ try {
     const row = (s.clips ?? []).find((x) => x.clip_id === id);
     check('E · หน้าค้นหากรอง "ไม่มีวิดีโอ" เจอคลิปนี้', row?.problem === 'no_video', row?.problem);
   }
+  // ── F · คลิปที่รอชิ้นอยู่ต้องไม่หมดเวลา ระหว่างที่โต๊ะเดียวกันยังส่งชิ้นของคลิปอื่น ──
+  // คิวในหน้าต่างอัดส่งทีละชิ้น — คลิปที่รออาจไม่ได้ชิ้นของตัวเองนานเกิน idle เพราะกำลังส่งของคลิปอื่นอยู่
+  {
+    const idA = await openAndScan('desk-lf', 'LATE-F1', 'SPXLATEF1');
+    await sleep(700);
+    await finalise(idA, { chunks: 3 });
+    await signal('desk-lf', { event: 'start', trace_id: 'LATE-F2', value: '356938035649902' });
+    await signal('desk-lf', { event: 'commit', trace_id: 'LATE-F2', ordersn: 'LATE-F2' });
+    const idB = (await waitFor(() => clipsCol.findOne({ ordersn: 'LATE-F2' })))._id;
+    const t0 = Date.now();
+    let seq = 0;
+    while (Date.now() - t0 < (IDLE_SEC + 6) * 1000) {     // นานกว่า idle ของ A
+      await put(idB, seq, seq === 0 ? head() : frames(seq, 50_000));
+      seq++;
+      await sleep(3000);
+    }
+    const mid = (await (await fetch(`${BASE}/api/clips/${idA}`)).json()).clip;
+    check('F · A ยังรออยู่ทั้งที่ไม่ได้ชิ้นของตัวเองนานเกิน idle', mid?.status === 'closing', mid?.status);
+    const r1 = await put(idA, 1, frames(1));
+    const r2 = await put(idA, 2, frames(2));
+    const a = await waitFor(() => clipsCol.findOne({ _id: idA, media_path: { $ne: null } }));
+    check('F · ชิ้นที่เหลือของ A มาถึงแล้วปิดครบ', r1.status === 200 && r2.status === 200 && a?.chunks === 3
+      && !a?.flags?.includes('incomplete'), `${r1.status} ${r2.status} · ${a?.chunks} ชิ้น ${JSON.stringify(a?.flags)}`);
+    await finalise(idB, { chunks: seq });
+    const b = await waitFor(() => clipsCol.findOne({ _id: idB, media_path: { $ne: null } }));
+    check('F · B ปิดครบด้วย', b?.chunks === seq && !b?.flags?.includes('incomplete'), `${b?.chunks}/${seq}`);
+  }
+  // ── G · หน้าต่างอัดถูกปิด/รีเฟรชกลางคลิป (detach) — บอกจำนวนชิ้นที่ลงเครื่องแล้ว ต้องรอชิ้นที่ค้าง ──
+  {
+    await signal('desk-lg', { event: 'start', trace_id: 'LATE-G', value: '356938035649907' });
+    await signal('desk-lg', { event: 'commit', trace_id: 'LATE-G', ordersn: 'LATE-G' });
+    const id = (await waitFor(() => clipsCol.findOne({ ordersn: 'LATE-G' })))._id;
+    await put(id, 0, head());
+    const d = await fetch(`${BASE}/api/station/desk-lg/detach`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clip_id: id, chunks: 3 }),
+    });
+    const mid = (await (await fetch(`${BASE}/api/clips/${id}`)).json()).clip;
+    check('G · detach พร้อมจำนวนชิ้น → รอชิ้นที่ค้าง ไม่ปิดทันที', d.ok && mid?.status === 'closing', mid?.status);
+    await sleep((GRACE_SEC + 2) * 1000);                 // หน้าต่างอัดที่เปิดใหม่ส่งคิวต่อ
+    const p1 = await put(id, 1, frames(1));
+    const p2 = await put(id, 2, frames(2));
+    const g = await waitFor(() => clipsCol.findOne({ _id: id, media_path: { $ne: null } }));
+    check('G · ชิ้นที่ค้างมาถึง → ปิดครบเป็น unverified', p1.status === 200 && p2.status === 200 && g?.status === 'unverified'
+      && g?.chunks === 3 && !g?.flags?.includes('incomplete'), `${p1.status} ${p2.status} · ${g?.status} ${g?.chunks} ${JSON.stringify(g?.flags)}`);
+
+    // หน้าต่างอัดรุ่นเก่า (ไม่บอกอะไร) → ปิดทันทีแบบเดิม
+    await signal('desk-lg', { event: 'start', trace_id: 'LATE-G2', value: '356938035649908' });
+    await signal('desk-lg', { event: 'commit', trace_id: 'LATE-G2', ordersn: 'LATE-G2' });
+    const id2 = (await waitFor(() => clipsCol.findOne({ ordersn: 'LATE-G2' })))._id;
+    await fetch(`${BASE}/api/station/desk-lg/detach`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const g2 = (await (await fetch(`${BASE}/api/clips/${id2}`)).json()).clip;
+    check('G · detach แบบเดิม (ไม่บอกจำนวนชิ้น) → ปิดทันที', g2?.status === 'unverified', g2?.status);
+  }
 } catch (err) {
   check('สคริปต์ทำงานจนจบ', false, err.message);
   console.error(serverLog.join('').slice(-3000));

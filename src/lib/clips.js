@@ -59,6 +59,30 @@ function dayFolder(date) {
   return { day: `${y}-${m}-${d}`, dir: path.join(y.toString(), m, d) };
 }
 
+/**
+ * คลิปของโต๊ะที่สั่งหยุดแล้วแต่หน้าต่างอัดยังไม่ยืนยัน (ยังไม่บอกจำนวนชิ้น)
+ * สัญญาณ stop ส่งครั้งเดียวทาง SSE — ถ้าตอนนั้นหน้าต่างอัดหลุดอยู่ (เช่นเพิ่งรีสตาร์ท กำลังต่อใหม่)
+ * มันจะอัดคลิปเดิมต่อไปจนเซิร์ฟเวอร์ปิดเองที่เพดาน แล้วภาพหลังจากนั้นโดน 409 ทิ้ง · ส่งซ้ำตอนต่อกลับมา
+ */
+export function pendingStops(stationId) {
+  const out = [];
+  for (const clip of clips.values()) {
+    if (clip.station_id === stationId && clip.status === 'closing' && clip.expected_chunks == null) {
+      out.push({ clip_id: clip._id, status: clip.final_status ?? clip.target_status ?? null });
+    }
+  }
+  return out;
+}
+
+/** งานที่ค้างอยู่ของโต๊ะ — มีคลิปกำลังอัดไหม และกี่คลิปที่ยังรอชิ้น/รอปิดอยู่ (รีสตาร์ทตอนนี้เสี่ยงหรือไม่) */
+export function stationLoad(stationId) {
+  let closing = 0;
+  for (const clip of clips.values()) {
+    if (clip.station_id === stationId && clip.status === 'closing') closing++;
+  }
+  return { open_clip: openByStation.has(stationId), closing };
+}
+
 export function getClip(clipId) {
   return clips.get(clipId) ?? null;
 }
@@ -321,12 +345,27 @@ export async function stop({ clipId, stationId, status = 'verified', note } = {}
 
   // ตัวจับเวลาสำรอง เผื่อหน้าต่างอัดไม่ยืนยัน (ปิดแท็บ/หลุด/หน้าต่างอัดรุ่นเก่าที่ยังไม่รีโหลด)
   armCloseTimer(clip);
+  // ลงฐานว่ากำลังปิดด้วยสถานะไหน — เซิร์ฟเวอร์รีสตาร์ทตอนนี้จะได้รับคลิปกลับมารอต่อได้ถูกสถานะ
+  persist(clip, 'stop', { status: clip.target_status });
 
   log.info({ clip_id: clip._id, status: clip.target_status, ordersn: clip.ordersn }, 'ส่งสัญญาณหยุดอัด (รอชิ้นสุดท้าย)');
   return clip;
 }
 
 const closingTimers = new Map();
+/** station_id → คลิปที่หน้าต่างอัดบอกจำนวนชิ้นแล้วแต่ยังได้ไม่ครบ */
+const awaitingByStation = new Map();
+
+function setAwaiting(clip, on) {
+  let set = awaitingByStation.get(clip.station_id);
+  if (on) {
+    if (!set) awaitingByStation.set(clip.station_id, (set = new Set()));
+    set.add(clip._id);
+  } else if (set) {
+    set.delete(clip._id);
+    if (!set.size) awaitingByStation.delete(clip.station_id);
+  }
+}
 
 /**
  * นับถอยหลังปิดไฟล์เอง — ยืดออกทุกครั้งที่ชิ้นวิดีโอยังไหลเข้ามา
@@ -339,7 +378,8 @@ function armCloseTimer(clip) {
   const prev = closingTimers.get(clip._id);
   if (prev) clearTimeout(prev);
   // หน้าต่างอัดบอกจำนวนชิ้นแล้ว = รู้ว่ายังมีชิ้นค้างส่งอยู่จริง รอนานกว่ามาก (เน็ตช้า ไม่ใช่หน้าต่างอัดหาย)
-  const awaiting = clip.expected_chunks != null;
+  // คลิปที่รับกลับมาหลังรีสตาร์ทก็รอนานเหมือนกัน — คิวในเครื่องของหน้าต่างอัดเพิ่งได้ส่งต่อ
+  const awaiting = clip.expected_chunks != null || clip.resumed === true;
   const idleMs = (awaiting ? config.lateChunkIdleSec : config.closeGraceSec) * 1000;
   const capMs = awaiting ? config.lateChunkMaxMinutes * 60_000 : 60_000;
   const hardStop = (clip.closing_at?.getTime() ?? Date.now()) + capMs;
@@ -383,7 +423,9 @@ export async function finaliseClip(clipId, finalStatus, note, expectedChunks) {
       clip.closing_at = new Date();
       forget(clip);
     }
+    setAwaiting(clip, true);
     armCloseTimer(clip);
+    persist(clip, 'awaiting', { expected: expectedChunks, received: clip.received?.size ?? clip.chunks });
     log.info(
       { clip_id: clip._id, expected: expectedChunks, received: clip.received?.size ?? clip.chunks },
       'รอชิ้นที่ยังค้างในคิวของหน้าต่างอัดก่อนปิดไฟล์',
@@ -396,6 +438,7 @@ export async function finaliseClip(clipId, finalStatus, note, expectedChunks) {
     clearTimeout(timer);
     closingTimers.delete(clipId);
   }
+  setAwaiting(clip, false);
 
   const status = finalStatus || clip.target_status || 'verified';
   clip.status = status;
@@ -455,7 +498,8 @@ const CLOSED = ['aborted', 'verified', 'registered', 'manual_stop', 'unverified'
 
 export async function putChunk(clipId, seq, buffer) {
   const clip = clips.get(clipId);
-  if (!clip) return { ok: false, final: true, error: 'ไม่พบคลิปนี้' };
+  // ยังรับคลิปค้างจากรอบก่อนไม่เสร็จ (เพิ่งบูต/ยังต่อฐานไม่ได้) — อาจเป็นคลิปที่กำลังจะถูกรับกลับมา ให้ส่งใหม่ ห้ามทิ้ง
+  if (!clip) return recoveryPending() ? { ok: false, final: false, error: 'เซิร์ฟเวอร์กำลังเริ่มระบบ' } : { ok: false, final: true, error: 'ไม่พบคลิปนี้' };
 
   // คลิปที่ปิดไปแล้วรับชิ้นเพิ่มไม่ได้ — ไฟล์ถูกต่อและคำนวณ checksum ไปแล้ว
   // ถ้ารับเพิ่มจะได้ไฟล์ที่ไม่ตรงกับ checksum ที่ประกาศไว้ ซึ่งทำลายค่าของมันในฐานะหลักฐาน
@@ -478,6 +522,13 @@ export async function putChunk(clipId, seq, buffer) {
       } else {
         armCloseTimer(clip);
       }
+    }
+    // โต๊ะนี้ยังส่งชิ้นเข้ามา = คิวของหน้าต่างอัดยังเดินอยู่ คลิปอื่นของโต๊ะที่รอชิ้นค้างต้องไม่หมดเวลา
+    // คิวส่งทีละชิ้น คลิปที่รออาจไม่ได้ชิ้นของตัวเองนานเกิน idle ทั้งที่ไม่มีอะไรผิด เพราะกำลังส่งของคลิปอื่น
+    // (2026-10-01 13:26–14:11 · 9 คลิปหมดเวลาแบบนี้) · เพดาน LATE_CHUNK_MAX_MINUTES ยังนับจาก closing_at เหมือนเดิม
+    for (const id of awaitingByStation.get(clip.station_id) ?? []) {
+      const other = clips.get(id);
+      if (id !== clip._id && other?.status === 'closing') armCloseTimer(other);
     }
     return { ok: true, seq };
   } catch (err) {
@@ -600,11 +651,17 @@ export function toMetadata(clip) {
     chunks: clip.chunks,
     checksum: clip.checksum,
     media_path: clip.media_path,
+    // ใช้รับคลิปที่กำลังปิดกลับมารอต่อหลังรีสตาร์ท
+    expected_chunks: clip.expected_chunks ?? null,
+    target_status: clip.final_status ?? clip.target_status ?? null,
   };
 }
 
 // ── คลิปค้างจากรอบก่อน (ตอนบูต) ─────────────────────────────────
 const RESTART_NOTE = 'เซิร์ฟเวอร์รีสตาร์ทระหว่างอัด';
+const OPEN_STATUSES = ['pending', 'recording'];
+let recoveryDone = false;
+const PROCESS_STARTED = Date.now();
 const RECOVERABLE = ['verified', 'registered', 'manual_stop', 'unverified', 'timeout'];   // ไม่รวม aborted (ตั้งใจทิ้ง)
 
 /**
@@ -627,18 +684,112 @@ export async function recoverOrphans() {
   } catch { /* ยังไม่มี _tmp */ }
 
   const docs = await repo.findOrphanClips(leftover, RECOVERABLE);
-  if (!docs?.length) return { found: 0, recovered: 0 };
+  if (docs === null) {
+    // อ่านฐานไม่ได้ = ยังบอกไม่ได้ว่าคลิปไหนค้าง ชิ้นที่มาระหว่างนี้ได้ 503 ไปก่อน แล้วลองใหม่
+    const t = setTimeout(() => void recoverOrphans(), 5000);
+    if (t.unref) t.unref();
+    return { found: 0, recovered: 0, resumed: 0 };
+  }
+
+  // คลิปเปิดที่ยังไม่เก่าเกินเพดาน รับกลับมาทำงานต่อได้ — หน้าต่างอัดเก็บชิ้นไว้ในเครื่องระหว่างเซิร์ฟเวอร์ดับ
+  // แล้วส่งต่อเอง และพนักงานยังสแกนปิดกล่องนั้นได้ตามปกติ · โต๊ะหนึ่งมีคลิปเปิดได้ตัวเดียว เอาตัวล่าสุด
+  const freshFrom = Date.now() - MAX_MS();
+  const resumable = new Map();
+  for (const d of docs) {
+    if (!OPEN_STATUSES.includes(d.status) || Date.parse(d.started_at) < freshFrom) continue;
+    const cur = resumable.get(d.station_id);
+    if (!cur || d.started_at > cur.started_at) resumable.set(d.station_id, d);
+  }
 
   let recovered = 0;
+  let resumed = 0;
   for (const doc of docs) {
     try {
-      if (await recoverOrphan(doc)) recovered++;
+      if (clips.has(doc._id)) continue;
+      const names = await chunkNames(doc._id);
+      const open = OPEN_STATUSES.includes(doc.status);
+      // กำลังปิดและยังมีชิ้นค้าง (รอชิ้นที่เหลือจากคิวเครื่อง) · ไม่มีชิ้นค้าง = ปิดไฟล์ไปแล้วหรือไม่มีอะไรรอ ให้ recoverOrphan ตัดสิน
+      const closingFresh = doc.status === 'closing' && names.length > 0
+        && Date.parse(doc.started_at) >= freshFrom - config.lateChunkMaxMinutes * 60_000;
+      if ((open && resumable.get(doc.station_id) === doc && !openByStation.has(doc.station_id)) || closingFresh) {
+        resumeOrphan(doc, names);
+        resumed++;
+      } else if (await recoverOrphan(doc)) {
+        recovered++;
+      }
     } catch (err) {
-      log.error({ clip_id: doc._id, err: err.message }, 'กู้คลิปค้างจากรอบก่อนไม่สำเร็จ');
+      log.error({ clip_id: doc._id, err: err.message }, 'จัดการคลิปค้างจากรอบก่อนไม่สำเร็จ');
     }
   }
-  log.warn({ found: docs.length, recovered }, 'พบคลิปค้างจากรอบก่อน — ต่อไฟล์จากชิ้นที่รับไว้แล้ว');
-  return { found: docs.length, recovered };
+  recoveryDone = true;
+  if (docs.length) log.warn({ found: docs.length, resumed, recovered }, 'พบคลิปค้างจากรอบก่อน — รับกลับมาทำต่อ/ต่อไฟล์จากชิ้นที่รับไว้แล้ว');
+  return { found: docs.length, recovered, resumed };
+}
+
+/**
+ * ยังรับคลิปค้างกลับไม่เสร็จ — ระหว่างนี้คลิปที่ไม่รู้จักอาจเป็นคลิปที่กำลังจะถูกรับกลับมา
+ * มีเพดาน BOOT_RECOVERY_GRACE_SEC นับจากบูต (ต่อ Mongo ไม่ได้นาน) เกินแล้วถือว่าไม่รู้จักจริง ดู config
+ */
+export function recoveryPending() {
+  return !recoveryDone && Date.now() - PROCESS_STARTED < config.bootRecoveryGraceSec * 1000;
+}
+
+async function chunkNames(clipId) {
+  try {
+    return (await fs.readdir(path.join(TMP(), clipId))).sort();
+  } catch {
+    return [];
+  }
+}
+
+/** คืนคลิปค้างเข้าหน่วยความจำให้ทำงานต่อจากเดิม — ชิ้นที่อยู่ใน _tmp แล้วนับเป็นได้รับแล้ว */
+function resumeOrphan(doc, names) {
+  const seqs = names.map((n) => Number.parseInt(n, 10)).filter(Number.isInteger);
+  const clip = {
+    _id: doc._id,
+    trace_id: null,
+    station_id: doc.station_id,
+    packer: doc.packer ?? null,
+    status: doc.status,
+    ordersn: doc.ordersn ?? null,
+    tracking_no: doc.tracking_no ?? null,
+    project_id: doc.project_id ?? null,
+    imeis: doc.imeis ?? [],
+    flags: [...(doc.flags ?? [])],
+    started_at: new Date(doc.started_at),
+    ended_at: null,
+    last_activity: new Date(),
+    day: doc.day,
+    bytes: 0,
+    chunks: seqs.length ? Math.max(...seqs) + 1 : 0,
+    received: new Set(seqs),
+    media_path: null,
+    checksum: null,
+    pinned: !!doc.pinned,
+    pin_reasons: [...(doc.pin_reasons ?? [])],
+  };
+  if (!clip.flags.includes('server_restart')) clip.flags.push('server_restart');
+  clips.set(clip._id, clip);
+
+  if (clip.status === 'closing') {
+    clip.closing_at = new Date();          // เวลารอนับใหม่จากตอนบูต
+    clip.resumed = true;
+    if (doc.target_status) clip.target_status = doc.target_status;
+    if (doc.expected_chunks != null) clip.expected_chunks = doc.expected_chunks;
+    setAwaiting(clip, true);
+  } else {
+    openByStation.set(clip.station_id, clip._id);
+  }
+  persist(clip, 'resume', { status: clip.status, received: clip.received.size });
+  log.warn({ clip_id: clip._id, station_id: clip.station_id, status: clip.status }, 'รับคลิปค้างกลับมาทำงานต่อหลังรีสตาร์ท');
+
+  if (clip.status === 'closing') {
+    if (clip.expected_chunks != null && clip.received.size >= clip.expected_chunks) {
+      void finaliseClip(clip._id, clip.target_status);
+    } else {
+      armCloseTimer(clip);
+    }
+  }
 }
 
 async function recoverOrphan(doc) {
@@ -773,9 +924,19 @@ export function stopSweeper() {
 }
 
 /** ปิดทุกคลิปที่ยังค้างของโต๊ะนั้น — ใช้ตอนหน้าต่างอัดหลุด (FR-1.9) */
-export async function closeStation(stationId, reason) {
+export async function closeStation(stationId, reason, pending = []) {
+  const counts = new Map(pending.map((p) => [p.clipId, p.chunks]));
+  // คลิปที่สั่งหยุดแล้วแต่หน้าต่างอัดยังไม่ทันบอกจำนวนชิ้น (หน้าปิดภายใน ~0.6 วิหลังสแกนปิด) — ใช้จำนวนจาก detach
+  for (const [id, n] of counts) {
+    const c = clips.get(id);
+    if (c && c.station_id === stationId && c.status === 'closing' && c.expected_chunks == null) {
+      await finaliseClip(id, undefined, undefined, n);
+    }
+  }
   const clip = openClipOf(stationId);
-  if (clip) await close(clip._id, 'unverified', reason);
+  if (!clip) return;
+  // คลิปที่กำลังอัด: ไม่มีจำนวนชิ้นมาด้วย (หน้าต่างอัดรุ่นเก่า) = ปิดทันทีแบบเดิม
+  await finaliseClip(clip._id, 'unverified', reason, counts.get(clip._id));
 }
 
 // ── บันทึกลงฐานข้อมูล ─────────────────────────────────────────

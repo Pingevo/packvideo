@@ -1,5 +1,6 @@
 import express from 'express';
 import pinoHttp from 'pino-http';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { log } from './log.js';
 import { config } from './config.js';
@@ -19,6 +20,8 @@ import { authRouter } from './routes/auth.js';
 import { camtestRouter } from './routes/camtest.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('./public', import.meta.url));
+/** หน้าต่างอัดกับสคริปต์ที่มันโหลด — ต้องได้รุ่นเดียวกันเสมอ (ดู setHeaders ของ static) */
+const RECORDER_ASSETS = new Set(['rec.html', 'chunk-queue.js', 'session.js', 'camtest.js', 'panel.js']);
 
 export function createApp() {
   const app = express();
@@ -81,9 +84,12 @@ export function createApp() {
   // กว่าจะถึงทุกโต๊ะ เพราะแคชฝั่งเบราว์เซอร์
   app.use(express.static(PUBLIC_DIR, {
     maxAge: config.env === 'production' ? '5m' : 0,
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
       // max-age=0 ยังเข้าแคชอยู่ดี ต้อง no-store ถึงจะไม่เก็บเลย
       if (config.env !== 'production') res.setHeader('Cache-Control', 'no-store');
+      // หน้าต่างอัดรีเฟรชตัวเองหลัง deploy (rec_version) แต่ reload ไม่ขอไฟล์ย่อยใหม่ถ้ายังอยู่ในแคช
+      // จะได้ rec.html รุ่นใหม่กับ chunk-queue.js รุ่นเก่า — ตรวจใหม่ทุกครั้ง (ได้ 304 ถ้าไม่เปลี่ยน แทบไม่มีต้นทุน)
+      else if (RECORDER_ASSETS.has(path.basename(filePath))) res.setHeader('Cache-Control', 'no-cache');
     },
   }));
 

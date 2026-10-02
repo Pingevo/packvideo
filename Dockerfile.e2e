@@ -1,0 +1,26 @@
+# image สำหรับเทส e2e ที่ต้องใช้เบราว์เซอร์จริง (หน้าต่างอัด rec.html) — ห้ามใช้บน production
+#
+#   docker build -f Dockerfile.e2e -t packvideo-e2e .
+#   docker run --rm --network <net> -e E2E_MONGO_URL=mongodb://<mongo>:27017/packvideo_e2e packvideo-e2e \
+#     node scripts/e2e-recorder-browser.mjs
+#
+# Chromium รุ่นปัจจุบันของ Debian อัด MP4 ได้แบบเดียวกับเครื่องที่โต๊ะ (หัวไฟล์ ~760 ไบต์ + ชิ้นภาพ)
+# เทสเปิด/ฆ่า/รีสตาร์ทเซิร์ฟเวอร์เองเป็น process ลูก จึงต้องอยู่ image เดียวกับ Node และโค้ดเซิร์ฟเวอร์
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium ffmpeg fonts-thai-tlwg ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_SKIP_DOWNLOAD=1 CHROME_PATH=/usr/bin/chromium NODE_ENV=development
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci && npm cache clean --force
+
+COPY src ./src
+COPY scripts ./scripts
+
+RUN chown -R node:node /app
+USER node
+ENTRYPOINT ["/usr/bin/tini", "--"]

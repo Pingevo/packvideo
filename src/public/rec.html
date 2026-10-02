@@ -93,7 +93,7 @@
   // เปลี่ยนทุกครั้งที่แก้ตรรกะการอัด — เซิร์ฟเวอร์อ่านค่านี้จากไฟล์แล้วเทียบกับที่ heartbeat
   // ส่งมา หน้าต่างอัดที่เปิดค้างมาตั้งแต่ก่อน deploy จะถูกบอกให้รีเฟรช (หน้านี้เปิดทั้งกะ
   // ไม่รีเฟรชเอง โค้ดใหม่จึงไม่มีผลจนกว่าจะมีคนกด)
-  var VERSION = '0.2.2';
+  var VERSION = '0.2.3';
   var K = {
     station: 'packvideo.station_id', camera: 'packvideo.camera_id', client: 'packvideo.client_id',
     device: 'packvideo.device_name',
@@ -258,6 +258,8 @@
    */
   var active = null;      // ตัวอัดของคลิปที่กำลังอัดอยู่
   var retiring = 0;       // จำนวนคลิปที่กำลังรอส่งชิ้นสุดท้าย — ห้ามรีโหลดหน้าระหว่างนี้
+  // คลิปที่หยุดอัดแล้วแต่ยังสั่งปิดไม่สำเร็จ (ช่วงรอ 600 ms + ระหว่างส่ง) — ถ้าหน้าปิดตอนนี้ต้องบอกจำนวนชิ้นของมันด้วย
+  var unconfirmed = {};
 
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
@@ -280,7 +282,7 @@
       return;
     }
 
-    var rec = { clipId: clipId, recorder: recorder, seq: 0, pushes: Promise.resolve(), stopping: null, finalising: null };
+    var rec = { clipId: clipId, recorder: recorder, seq: 0, stored: 0, pushes: Promise.resolve(), stopping: null, finalising: null };
     rec.stopped = new Promise(function (resolve) { recorder.onstop = resolve; });
 
     recorder.onerror = function (e) {
@@ -295,6 +297,8 @@
       // ต่อคิวทีละชิ้นตามลำดับ — IndexedDB ไม่รับประกันว่า put ที่เรียกก่อนจะเสร็จก่อน
       rec.pushes = rec.pushes.then(function () {
         return queue.push(rec.clipId, seq, e.data);
+      }).then(function () {
+        rec.stored = seq + 1;   // ลงเครื่องแล้วตามลำดับ — หน้าปิดไปก็ยังส่งต่อได้ตอนเปิดใหม่
       }).catch(function (err) {
         warn('เก็บชิ้นวิดีโอลงเครื่องไม่ได้: ' + err.message);
       });
@@ -316,14 +320,20 @@
     return rec.stopping;
   }
 
-  /** สั่งปิดคลิป — ลองซ้ำเมื่อเน็ตสะดุด เพราะถ้าไม่ถึง เซิร์ฟเวอร์จะปิดเองที่ 8 วินาทีโดยไม่รอชิ้นที่ค้าง */
+  /**
+   * สั่งปิดคลิป — ลองซ้ำเมื่อเน็ตสะดุดหรือเซิร์ฟเวอร์ตอบ 5xx (กำลังรีสตาร์ท: nginx ตอบ 502, เพิ่งบูตตอบ 503)
+   * ถ้าไม่ถึง เซิร์ฟเวอร์จะปิดเองตามเวลารอโดยไม่รู้ว่ายังมีชิ้นค้างในคิว · ลองได้ราว 40 วินาที
+   */
   function postFinalise(rec, body, attempt) {
+    function again(err) {
+      if (attempt >= 10) { if (err) throw err; return null; }
+      return wait(Math.min(1000 * (attempt + 1), 5000)).then(function () { return postFinalise(rec, body, attempt + 1); });
+    }
     return fetch('/api/clip/' + encodeURIComponent(rec.clipId) + '/finalise', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    }).catch(function (err) {
-      if (attempt >= 3) throw err;
-      return wait(1000 * (attempt + 1)).then(function () { return postFinalise(rec, body, attempt + 1); });
-    });
+    }).then(function (res) {
+      return res.status >= 500 ? again(null) : res;
+    }, again);
   }
 
   /**
@@ -341,6 +351,7 @@
     if (active === rec) clearActive();
     if (rec.finalising) return rec.finalising;
     retiring++;
+    unconfirmed[rec.clipId] = rec;
     rec.finalising = drain(rec).then(function () {
       var body = { chunks: rec.seq };
       if (status) body.status = status;
@@ -348,7 +359,7 @@
       return postFinalise(rec, body, 0);
     }).catch(function (err) {
       try { console.warn('[packvideo] finalise error:', err); } catch (e) {}
-    }).then(function () { retiring--; });
+    }).then(function () { retiring--; delete unconfirmed[rec.clipId]; });
     return rec.finalising;
   }
 
@@ -430,7 +441,9 @@
     es = null;
     setText('conn', 'ขาดการเชื่อมต่อ — กำลังต่อใหม่');
     esTimer = setTimeout(function () { esTimer = null; connect(); }, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    // เพดาน 3 วินาที (เดิม 30) — ระหว่างที่ยังต่อไม่ติด สัญญาณเริ่ม/หยุดไปไม่ถึง ออเดอร์ที่สแกนช่วงนั้นไม่มีวิดีโอ
+    // หลังเซิร์ฟเวอร์รีสตาร์ท 6 วินาที เดิมต่อกลับได้ช้าสุดราว 30 วินาที · ต่อทุก 3 วินาทีจากโต๊ะไม่กี่โต๊ะไม่หนักเซิร์ฟเวอร์
+    reconnectDelay = Math.min(reconnectDelay * 2, 3000);
   }
 
   // เซิร์ฟเวอร์ส่งเหตุการณ์ ping ทุก pingMs — เงียบเกิน 2.5 เท่า = สายตายแต่ไม่มีใครบอก
@@ -499,6 +512,7 @@
       var rec = active && (!d.clip_id || active.clipId === d.clip_id) ? active : null;
       if (!rec) return;       // คลิปนี้ถูกปิดไปแล้วตอนคลิปใหม่มาแทรก
       clearActive();
+      unconfirmed[rec.clipId] = rec;
       // อัดต่ออีก 600 ms ให้เห็นกล่องหลังยิงบาร์โค้ดชัดๆ แล้วค่อยปิด
       // ถ้าคลิปใหม่เริ่มระหว่างรอ beginClip ไม่เห็น rec นี้แล้ว (active ถูกล้าง) จึงไม่ไปหยุดตัวใหม่
       setTimeout(function () { retire(rec, d.status); }, 600);
@@ -611,7 +625,17 @@
   // ── กันหน้าปิดโดยไม่ตั้งใจ ──────────────────────────────────
   window.addEventListener('beforeunload', function (e) {
     if (S.clipId || S.queueDepth) { e.preventDefault(); e.returnValue = ''; }
-    navigator.sendBeacon('/api/station/' + encodeURIComponent(station) + '/detach', new Blob([], {}));
+    // บอกจำนวนชิ้นของคลิปที่กำลังอัดที่ลงเครื่องแล้ว — เซิร์ฟเวอร์จะรอให้หน้าต่างอัดที่เปิดใหม่ส่งต่อจนครบ
+    // เดิมปิดคลิปทันที ชิ้นที่ค้างในคิวโดน 409 แล้วถูกลบทิ้ง (เช่นพนักงานกดแถบแดงให้เปิดหน้าต่างอัดใหม่)
+    // รวมคลิปที่หยุดแล้วแต่ยังสั่งปิดไม่สำเร็จ (เช่นรีเฟรชทันทีหลังสแกนปิด) ไม่งั้นเซิร์ฟเวอร์ปิดที่ 8 วินาทีโดยไม่รอ
+    var list = [];
+    if (active) list.push({ clip_id: active.clipId, chunks: active.stored });
+    Object.keys(unconfirmed).forEach(function (id) {
+      if (!active || active.clipId !== id) list.push({ clip_id: id, chunks: unconfirmed[id].stored });
+    });
+    var body = { clips: list };
+    navigator.sendBeacon('/api/station/' + encodeURIComponent(station) + '/detach',
+      new Blob([JSON.stringify(body)], { type: 'application/json' }));
   });
 
   // จอดับกลางกะแล้วกล้องอาจถูกปล่อย — ขอไม่ให้ดับ

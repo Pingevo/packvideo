@@ -77,6 +77,10 @@ export const config = {
   // หน้าต่างอัดลบชิ้นที่โดน 409 ทิ้ง วิดีโอที่อัดได้จริงจึงหายทั้งคลิป (14 คลิปในวันนั้น)
   lateChunkIdleSec: int('LATE_CHUNK_IDLE_SEC', 120),
   lateChunkMaxMinutes: int('LATE_CHUNK_MAX_MINUTES', 20),
+  // หลังบูต ระหว่างที่ยังรับคลิปค้างกลับไม่เสร็จ ชิ้นของคลิปที่ไม่รู้จักได้ 503 (ให้ส่งใหม่) ไม่เกินเท่านี้
+  // เกินแล้ว (ต่อ Mongo ไม่ได้นาน) กลับไปตอบ 409 ตามเดิม ไม่งั้นคิวในเครื่องที่ส่งทีละชิ้นค้างอยู่ที่ชิ้นนั้น
+  // ชิ้นของคลิปใหม่ข้างหลังไม่ได้ส่งจนคลิปใหม่หมดเวลา — เสียคลิปใหม่แทนคลิปเก่า
+  bootRecoveryGraceSec: int('BOOT_RECOVERY_GRACE_SEC', 60),
 
   // รายชื่อโต๊ะที่เลือกได้ในหน้าตั้งค่า — คลังมี 6 โต๊ะขึ้นไป
   stations: (() => {
@@ -117,7 +121,7 @@ const KNOWN_KEYS = new Set([
   'NODE_ENV', 'PORT', 'LOG_LEVEL',
   'MONGO_URL', 'MONGO_DB',
   'PACK_VIDEO_PATH', 'DISK_WARN_PCT', 'DISK_SQUEEZE_PCT', 'DISK_STOP_PCT',
-  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'NO_VIDEO_ALERT_SEC', 'EMPTY_STREAK_ALERT', 'CLOSE_GRACE_SEC', 'LATE_CHUNK_IDLE_SEC', 'LATE_CHUNK_MAX_MINUTES', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT', 'SSE_PING_MS',
+  'RETENTION_DAYS', 'CLIP_MAX_MINUTES', 'NO_VIDEO_ALERT_SEC', 'EMPTY_STREAK_ALERT', 'CLOSE_GRACE_SEC', 'LATE_CHUNK_IDLE_SEC', 'LATE_CHUNK_MAX_MINUTES', 'BOOT_RECOVERY_GRACE_SEC', 'ALLOWED_ORIGINS', 'STATIONS', 'STATION_COUNT', 'SSE_PING_MS',
   'FFMPEG_PATH', 'FFPROBE_PATH',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
   'SELLCENTER_JWT_SECRET', 'AUTH_MODE', 'SELLCENTER_LOGIN_URL', 'SESSION_IDLE_HOURS', 'PACKVIDEO_API_KEY',
