@@ -527,6 +527,18 @@
    * ตอนนี้ลองหลายทางเรียงจากที่มั่นใจที่สุดลงไป และถ้าไม่เจอสักทางจะยิงสัญญาณบอก
    * ไม่ปล่อยเงียบ — แถบแดงกับ placeholder ยังทำงานอยู่ดี ป้ายเป็นของแถม ไม่ใช่ตัวหลัก
    */
+  /** หน้านี้มีป้ายที่เขียนว่า IMEI สั้นๆ อยู่ที่ไหนสักแห่งไหม (ป้าย ไม่ใช่ข้อความยาวที่บังเอิญมีคำนี้) */
+  function pageHasImeiLabel() {
+    try {
+      var els = document.querySelectorAll('th, td, label, span, b, strong, h1, h2, h3, h4, h5, h6, p, div');
+      for (var i = 0; i < els.length; i++) {
+        var t = (els[i].textContent || '').trim();
+        if (t.length <= 20 && /^imei\b/i.test(t)) return true;
+      }
+    } catch (e) { swallow(e); }
+    return false;
+  }
+
   function findLabel(el) {
     var cands = [];
     try {
@@ -939,9 +951,12 @@
           saved.labelEl = lb;
           saved.label = lb.innerHTML;
           lb.textContent = 'เลขพัสดุ';
-        } else {
+        } else if (pageHasImeiLabel()) {
+          // มีป้าย IMEI ในหน้าแต่หาที่ผูกกับช่องสแกนไม่เจอ = โครงสร้างหน้าเปลี่ยน ควรมีคนดู
           reportDegraded('label_not_found');
         }
+        // ไม่มีป้าย IMEI ในหน้าเลย (Shopee Express, ส่งของ KOL) — ไม่มีอะไรให้เปลี่ยน ไม่ใช่ความผิดปกติ
+        // เดิมรายงานทุกครั้ง หน้า monitor เตือน desk-02 ราว 40 ครั้ง/ชม. จนกลบคำเตือนจริง
       }
       document.body.classList.add('packvideo-waiting');
     }

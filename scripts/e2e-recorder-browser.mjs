@@ -79,11 +79,17 @@ async function killServer() {
 }
 
 // ── proxy หน่วงชิ้นภาพ (ชิ้นที่ 1 ขึ้นไป) — ทางเดียวที่หน้าต่างอัดคุยกับเซิร์ฟเวอร์ ──
-const proxy = { delayMs: 0, uploads: [], log: [], blockStream: false, streams: new Set() };
+const proxy = { delayMs: 0, uploads: [], log: [], blockStream: false, streams: new Set(), pages: {} };
 const proxyServer = http.createServer((req, res) => {
   const parts = [];
   req.on('data', (d) => parts.push(d));
   req.on('end', () => {
+    // หน้าจำลองหน้าแพ็คของ sellcenter (โหลด hook.js จาก origin เดียวกับ proxy เหมือนหน้าจริงโหลดจาก pack.)
+    if (req.url.startsWith('/__test/') && proxy.pages[req.url]) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(proxy.pages[req.url]);
+      return;
+    }
     const body = Buffer.concat(parts);
     const m = /\/api\/clip\/([^/]+)\/chunk\/(\d+)$/.exec(req.url);
     if (process.env.DEBUG && !m) proxy.log.push(`${new Date().toISOString().slice(14, 23)} ${req.method} ${req.url}`);
@@ -187,7 +193,43 @@ async function settled(id, ms = 120_000) {
 }
 
 // ── เคส ───────────────────────────────────────────────────────
+/** หน้าแพ็คจำลองที่โหลด hook.js — station/token/เลขพัสดุที่รอ ใส่ไว้ก่อนเหมือนเครื่องที่ตั้งค่าแล้วและเพิ่งพิมพ์ใบปะหน้า */
+async function openHookPage(url, station) {
+  const page = await browser.newPage();
+  await page.evaluateOnNewDocument((st) => {
+    localStorage.setItem('packvideo.station_id', st);
+    localStorage.setItem('packvideo.token', 'e2e');
+    localStorage.setItem('packvideo.expect', JSON.stringify({ v: 'SPXHOOK1', at: Date.now() }));
+    localStorage.setItem('packvideo.rec_opened', '1');
+  }, station);
+  await page.goto(`${PAGE}${url}`, { waitUntil: 'load' });
+  await sleep(2000);
+  return page;
+}
+
 const CASES = {
+  /**
+   * hook.js ต้องรายงาน "หาป้ายไม่เจอ" เฉพาะเมื่อหน้ามีป้าย Imei อยู่จริงแต่หาตำแหน่งไม่เจอ (โครงสร้างหน้าเปลี่ยน)
+   * หน้า Shopee Express / ส่งของ KOL ไม่มีป้าย Imei ตั้งแต่แรก — เดิมรายงานทุกครั้ง monitor เตือนรัว 38–48 ครั้ง/ชม.
+   */
+  async hook_label_warning_only_when_label_exists() {
+    const head = '<!doctype html><meta charset="utf-8"><span id="lblUser">e2e</span>';
+    const tail = '<script async src="/hook.js"></script>';
+    proxy.pages['/__test/normal.html'] = `${head}<table><tr><th>Imei</th><td><input id="txt_imei"></td></tr></table>${tail}`;
+    proxy.pages['/__test/express.html'] = `${head}<table><tr><td><input id="txt_imei"></td></tr></table>${tail}`;
+    proxy.pages['/__test/moved.html'] = `${head}<h3>Imei</h3><p>สแกนด้านล่าง</p><section><div><input id="txt_imei"></div></section>${tail}`;
+
+    const pn = await openHookPage('/__test/normal.html', 'desk-01');
+    const label = await pn.$eval('th', (el) => el.textContent);
+    await openHookPage('/__test/express.html', 'desk-02');
+    await openHookPage('/__test/moved.html', 'desk-03');
+    await sleep(1000);
+    const keys = ((await api('/api/monitor')).findings ?? []).map((f) => f.key);
+    check('hook · หน้าปกติเปลี่ยนป้ายเป็น "เลขพัสดุ" ไม่รายงาน', label === 'เลขพัสดุ' && !keys.includes('ui:desk-01'), `ป้าย "${label}"`);
+    check('hook · หน้าที่ไม่มีป้าย Imei (Shopee Express/KOL) ไม่รายงานว่าหาไม่เจอ', !keys.includes('ui:desk-02'), keys.join(','));
+    check('hook · หน้าที่มีป้าย Imei แต่ย้ายที่ ยังรายงาน', keys.includes('ui:desk-03'), keys.join(','));
+  },
+
   /**
    * ข้อ 7 · production: ไฟล์ของหน้าต่างอัดต้องถูกตรวจใหม่ทุกครั้งที่โหลด (หน้าต่างอัดรีเฟรชเองหลัง deploy)
    * ถ้าแคช 5 นาที รีโหลดแล้วได้ rec.html รุ่นใหม่แต่ chunk-queue.js รุ่นเก่าจากแคช — คิวผิดรุ่นโดยไม่มีใครรู้

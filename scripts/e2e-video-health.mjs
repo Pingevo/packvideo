@@ -56,8 +56,12 @@ function ftypChunk(fill, size = 1000) {
   b.write('ftypisom', 4, 'latin1');
   return b;
 }
-/** ชิ้นกลางคลิปของ fragmented MP4 — ขึ้นต้นด้วย moof ไม่มีหัวไฟล์ */
-function moofChunk(fill, size = 1000) {
+/**
+ * ชิ้นกลางคลิปของ fragmented MP4 — ขึ้นต้นด้วย moof ไม่มีหัวไฟล์
+ * ขนาดต้องเกิน MIN_VIDEO_BYTES (4 KB) เหมือนชิ้นจริง (100 KB ขึ้นไป) — ไฟล์ที่มีแค่หัว ftyp ไม่มีภาพ
+ * นับเป็น "ไม่มีวิดีโอ" (2026-10-01 มี 14 คลิปแบบนั้นที่ระบบเคยนับว่ามีวิดีโอแล้วไม่เตือน)
+ */
+function moofChunk(fill, size = 6000) {
   const b = Buffer.alloc(size, fill);
   b.writeUInt32BE(size, 0);
   b.write('moof', 4, 'latin1');
@@ -138,7 +142,7 @@ await sleep(300);
   await sleep(300);
   const c = await clipByOrder('VH-TAIL');
   check('ชิ้นสุดท้ายหลังสแกนปิดถูกรับ (ไม่ใช่ 409)', late.status === 200, `HTTP ${late.status}`);
-  check('ไฟล์รวมครบ 3 ชิ้น', c?.bytes === 3000, `${c?.bytes} ไบต์`);
+  check('ไฟล์รวมครบ 3 ชิ้น', c?.bytes === 1000 + 6000 + 6000, `${c?.bytes} ไบต์`);
   check('finalise โดยไม่ส่งสถานะ ใช้สถานะที่ตัดสินตอนสแกน (verified)', c?.status === 'verified', c?.status);
 }
 
@@ -163,7 +167,7 @@ await sleep(300);
   await sleep(GRACE_SEC * 1000 + 800);
   const old = (await clipsOf()).find((c) => c.clip_id === oldId);
   check('หน้าต่างอัดไม่ยืนยัน → ปิดเองหลังรอ', old?.status === 'unverified', old?.status);
-  check('คลิปเก่าได้ชิ้นท้ายครบ', old?.bytes === 2000, `${old?.bytes} ไบต์`);
+  check('คลิปเก่าได้ชิ้นท้ายครบ', old?.bytes === 1000 + 6000, `${old?.bytes} ไบต์`);
 
   await putChunk(newId, 0, ftypChunk(6));
   await signal({ event: 'abort', trace_id: 'vh-new', reason: 'test' });
@@ -184,7 +188,7 @@ await sleep(300);
   await sleep(300);
   const c = await clipByOrder('VH-HEAD');
   const head = Buffer.from(await (await fetch(`${BASE}/media/${id}`, { headers: { Range: 'bytes=0-11' } })).arrayBuffer());
-  check('ตัดชิ้นของคลิปอื่นหน้าไฟล์ออก', c?.bytes === 2000 && c?.flags.includes('head_trimmed'), `${c?.bytes} ไบต์ · ${c?.flags}`);
+  check('ตัดชิ้นของคลิปอื่นหน้าไฟล์ออก', c?.bytes === 1000 + 6000 && c?.flags.includes('head_trimmed'), `${c?.bytes} ไบต์ · ${c?.flags}`);
   check('ไฟล์ขึ้นต้นด้วย ftyp', head.toString('latin1', 4, 8) === 'ftyp', head.toString('latin1', 4, 8));
 }
 
@@ -216,12 +220,25 @@ await sleep(300);
   d = await desk();
   check('คลิปว่างสั้นๆ ไม่นับเพิ่ม', d.empty_streak === 3, `streak ${d.empty_streak}`);
 
+  // ได้แค่หัวไฟล์ (ftyp ~760 ไบต์ ไม่มีภาพ) = ไม่มีวิดีโอ ต้องนับต่อ ไม่ใช่รีเซ็ตเหมือนได้ภาพ
+  // 2026-10-01 มี 14 คลิปแบบนี้ ระบบนับว่ามีวิดีโอ จึงไม่เคยเตือนว่าไม่มีภาพติดกัน
+  await signal({ event: 'start', trace_id: 'vh-hdr', value: '350000000000022' });
+  await sleep(200);
+  const hdr = await newestId();
+  await putChunk(hdr, 0, ftypChunk(3, 760));
+  await sleep(NO_VIDEO_SEC * 1000 + 300);
+  await finalise(hdr, { status: 'manual_stop' });
+  await sleep(150);
+  d = await desk();
+  check('คลิปที่มีแค่หัวไฟล์ (ไม่มีภาพ) นับเป็นคลิปว่าง', d.empty_streak === 4, `streak ${d.empty_streak}`);
+
   await signal({ event: 'start', trace_id: 'vh-back', value: '350000000000021' });
   await sleep(200);
   const back = await newestId();
   await putChunk(back, 0, ftypChunk(1));
   d = await desk();
   check('ภาพกลับมา → แถบหายแดงทันทีโดยไม่ต้องรอปิดกล่อง', d.video_ok === true, d.video_problem_text ?? 'ok');
+  await putChunk(back, 1, moofChunk(2));   // คลิปที่มีภาพจริง ไม่ใช่แค่หัวไฟล์
   await finalise(back, { status: 'manual_stop' });
   await sleep(200);
   const after = await (await fetch(`${BASE}/api/monitor`)).json();
